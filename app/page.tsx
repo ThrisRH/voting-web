@@ -247,6 +247,10 @@ export default function Home() {
     if (!votingStarted || timeLeft === 0) return;
     if (hasVoted) return;
 
+    // Optimistic Update (Immediate visual response & confetti)
+    setHasVoted(teamId);
+    triggerVoteConfetti();
+
     try {
       const res = await fetch("/api/voting", {
         method: "POST",
@@ -256,15 +260,16 @@ export default function Home() {
 
       const data = await res.json();
       
-      if (res.ok) {
-        setHasVoted(teamId);
-        triggerVoteConfetti();
-      } else {
+      if (!res.ok) {
+        // Revert optimistic update on failure
+        setHasVoted(null);
         setErrorMessage(data.error || "Có lỗi xảy ra!");
         setTimeout(() => setErrorMessage(null), 5000);
       }
     } catch (err) {
       console.error(err);
+      // Revert optimistic update on error
+      setHasVoted(null);
       setErrorMessage("Không thể kết nối đến máy chủ!");
       setTimeout(() => setErrorMessage(null), 5000);
     }
@@ -631,10 +636,15 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 {votingStarted ? (
                   <button 
-                    onClick={() => sendHostAction("RESET_ALL")}
+                    onClick={async () => {
+                      await sendHostAction("RESET_ALL");
+                      setIsHost(false);
+                      setIsAdminOpen(false);
+                      sessionStorage.removeItem("voting_app_is_host");
+                    }}
                     className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
-                    <X className="w-3 h-3" /> Đóng & Đặt Lại Trạng Thái Chờ
+                    <X className="w-3 h-3" /> Kết Thúc Bỏ Phiếu & Đăng Xuất
                   </button>
                 ) : (
                   <button 
