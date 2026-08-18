@@ -259,11 +259,19 @@ export async function PUT(req: NextRequest) {
     const finalDuration = durationSeconds || store.duration;
     const targetEndTime = Date.now() + finalDuration * 1000;
     
+    // Reset votes and IP locks when starting/reactivating a session
+    const resetVotes: Record<string, number> = {};
+    Object.keys(store.votes).forEach(key => {
+      resetVotes[key] = 0;
+    });
+
     await updateDoc(sessionDocRef, {
       votingStarted: true,
       timerRunning: true,
       endTime: targetEndTime,
-      pausedTimeLeft: finalDuration
+      pausedTimeLeft: finalDuration,
+      votes: resetVotes,
+      votedIps: {}
     });
   } 
   else if (action === "RESET_ALL") {
