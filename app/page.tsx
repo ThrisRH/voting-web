@@ -41,6 +41,7 @@ export default function Home() {
   const [timeLeft, setTimeLeft] = useState<number>(300);
   const [timerRunning, setTimerRunning] = useState<boolean>(false);
   const [endTime, setEndTime] = useState<number | null>(null);
+  const [pausedTimeLeft, setPausedTimeLeft] = useState<number>(300);
 
   // Authorization & Mode States
   const [votingStarted, setVotingStarted] = useState<boolean>(false);
@@ -106,6 +107,7 @@ export default function Home() {
           setVotingStarted(data.votingStarted || false);
           setTimerRunning(data.timerRunning || false);
           setEndTime(data.endTime || null);
+          setPausedTimeLeft(data.pausedTimeLeft !== undefined ? data.pausedTimeLeft : duration);
           
           // Map team names config to real-time votes counts
           const votesMap = data.votes || {};
@@ -129,14 +131,13 @@ export default function Home() {
       }
     );
 
-    return () => unsubscribe();
-  }, [loading, teamNamesConfig]);
+    return unsubscribe;
+  }, [loading, teamNamesConfig, duration]);
 
   // Sync client IP vote state with Firestore when the document updates
   useEffect(() => {
     if (!clientIp || loading) return;
 
-    // We can also subscribe to our specific IP status to handle admin resets
     const sanitizedIp = clientIp.replace(/\//g, "_");
     const ipDocRef = doc(db, "voted_ips", sanitizedIp);
     const unsubscribe = onSnapshot(ipDocRef, (snapshot) => {
@@ -147,7 +148,7 @@ export default function Home() {
       }
     });
 
-    return () => unsubscribe();
+    return unsubscribe;
   }, [clientIp, loading]);
 
   // Local Timer countdown for smooth display
@@ -170,15 +171,19 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [endTime, timerRunning, votingStarted]);
 
-  // Adjust local clock when endTime changes from Firestore
+  // Adjust local clock when endTime or pausedTimeLeft changes
   useEffect(() => {
-    if (endTime && votingStarted) {
-      const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
-      setTimeLeft(remaining);
+    if (votingStarted) {
+      if (timerRunning && endTime) {
+        const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+        setTimeLeft(remaining);
+      } else {
+        setTimeLeft(pausedTimeLeft);
+      }
     } else {
       setTimeLeft(duration);
     }
-  }, [endTime, votingStarted, duration]);
+  }, [endTime, timerRunning, votingStarted, pausedTimeLeft, duration]);
 
   // Winner Confetti Explosion
   useEffect(() => {

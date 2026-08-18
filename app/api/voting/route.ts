@@ -17,10 +17,11 @@ import {
 const ADMIN_PASSWORD = "123456";
 const CONFIG_FILE_PATH = path.join(process.cwd(), "public", "teams.json");
 
-interface FirestoreStore {
+interface SessionState {
   votingStarted: boolean;
   timerRunning: boolean;
   endTime: number | null;
+  pausedTimeLeft: number;
   duration: number;
   title: string;
   votes: Record<string, number>;
@@ -45,7 +46,7 @@ function getClientIp(req: NextRequest): string {
   return "127.0.0.1";
 }
 
-// Helper to initialize default document structure from teams.json configuration
+// Helper to initialize default Firestore session doc
 async function initializeFirestoreStore() {
   let configTitle = "Bình Chọn Đội Tuyển Xuất Sắc";
   let configDuration = 300;
@@ -59,7 +60,7 @@ async function initializeFirestoreStore() {
       configTeams = configData.teams || configTeams;
     }
   } catch (err) {
-    console.error("Error reading public/teams.json config file:", err);
+    console.error("Error reading config teams.json file:", err);
   }
 
   const initialVotes: Record<string, number> = {};
@@ -67,10 +68,11 @@ async function initializeFirestoreStore() {
     initialVotes[`team-${idx + 1}`] = 0;
   });
 
-  const defaultStore: FirestoreStore = {
+  const defaultStore: SessionState = {
     votingStarted: false,
     timerRunning: false,
     endTime: null,
+    pausedTimeLeft: configDuration,
     duration: configDuration,
     title: configTitle,
     votes: initialVotes
@@ -82,14 +84,14 @@ async function initializeFirestoreStore() {
 }
 
 // Helper to get or initialize session
-async function getSessionDoc(): Promise<FirestoreStore> {
+async function getSessionDoc(): Promise<SessionState> {
   const sessionDocRef = doc(db, "sessions", "voting_session");
   const docSnap = await getDoc(sessionDocRef);
 
   if (docSnap.exists()) {
-    const data = docSnap.data() as FirestoreStore;
+    const data = docSnap.data() as SessionState;
     
-    // Auto-update config if teams.json changed (optional safety check)
+    // Auto-update config if teams.json changed
     let configTeams: string[] = [];
     try {
       if (fs.existsSync(CONFIG_FILE_PATH)) {
@@ -145,9 +147,6 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // Check if client IP has voted in Firestore
-  // Since IP might contain periods/slashes, it is perfectly fine as document ID in Firestore.
-  // We sanitize it slightly (replace slashes just in case, though standard IPs don't have them)
   const sanitizedIp = ip.replace(/\//g, "_");
   const ipDocRef = doc(db, "voted_ips", sanitizedIp);
   const ipSnap = await getDoc(ipDocRef);
@@ -159,6 +158,7 @@ export async function GET(req: NextRequest) {
     votingStarted: store.votingStarted,
     timerRunning: store.timerRunning,
     endTime: store.endTime,
+    pausedTimeLeft: store.pausedTimeLeft,
     teams: teamsList,
     clientIp: ip,
     hasVoted: !!hasVotedFor,
@@ -196,14 +196,21 @@ export async function POST(req: NextRequest) {
         return { error: "Phiên bầu chọn chưa được khởi tạo!" };
       }
 
-      const session = sessionSnap.data() as FirestoreStore;
+      const session = sessionSnap.data() as SessionState;
 
       if (!session.votingStarted) {
         return { error: "Cuộc bình chọn chưa bắt đầu!" };
       }
 
-      if (session.endTime && Date.now() > session.endTime) {
-        return { error: "Thời gian bình chọn đã kết thúc!" };
+      // If timer is running, check end time. If paused, check remaining time.
+      if (session.timerRunning) {
+        if (session.endTime && Date.now() > session.endTime) {
+          return { error: "Thời gian bình chọn đã kết thúc!" };
+        }
+      } else {
+        if (session.pausedTimeLeft <= 0) {
+          return { error: "Thời gian bình chọn đã kết thúc!" };
+        }
       }
 
       // 3. Update vote count
@@ -252,7 +259,8 @@ export async function PUT(req: NextRequest) {
     await updateDoc(sessionDocRef, {
       votingStarted: true,
       timerRunning: true,
-      endTime: targetEndTime
+      endTime: targetEndTime,
+      pausedTimeLeft: finalDuration
     });
   } 
   else if (action === "RESET_ALL") {
@@ -266,6 +274,7 @@ export async function PUT(req: NextRequest) {
       votingStarted: false,
       timerRunning: false,
       endTime: null,
+      pausedTimeLeft: store.duration,
       votes: resetVotes
     });
 
@@ -305,39 +314,44 @@ export async function PUT(req: NextRequest) {
     }
   }
   else if (action === "TOGGLE_TIMER") {
-    if (store.endTime) {
-      if (store.timerRunning) {
-        const timeLeft = Math.max(0, store.endTime - Date.now());
+    if (store.timerRunning) {
+      // Pause: calculate remaining seconds and save it
+      if (store.endTime) {
+        const remaining = Math.max(0, Math.floor((store.endTime - Date.now()) / 1000));
         await updateDoc(sessionDocRef, {
           timerRunning: false,
-          endTime: timeLeft
-        });
-      } else {
-        const timeLeft = store.endTime || 0;
-        await updateDoc(sessionDocRef, {
-          timerRunning: true,
-          endTime: Date.now() + timeLeft
+          pausedTimeLeft: remaining,
+          endTime: null
         });
       }
+    } else {
+      // Resume: set new endTime based on pausedTimeLeft
+      const targetEndTime = Date.now() + store.pausedTimeLeft * 1000;
+      await updateDoc(sessionDocRef, {
+        timerRunning: true,
+        endTime: targetEndTime
+      });
     }
   }
   else if (action === "ADJUST_TIMER") {
     const { seconds } = body;
-    if (store.endTime) {
-      if (store.timerRunning) {
+    if (store.timerRunning) {
+      if (store.endTime) {
         await updateDoc(sessionDocRef, {
           endTime: store.endTime + seconds * 1000
         });
-      } else {
-        await updateDoc(sessionDocRef, {
-          endTime: Math.max(0, store.endTime + seconds * 1000)
-        });
       }
+    } else {
+      const newPausedTime = Math.max(0, store.pausedTimeLeft + seconds);
+      await updateDoc(sessionDocRef, {
+        pausedTimeLeft: newPausedTime
+      });
     }
   }
   else if (action === "END_NOW") {
     await updateDoc(sessionDocRef, {
       timerRunning: false,
+      pausedTimeLeft: 0,
       endTime: Date.now()
     });
   }
