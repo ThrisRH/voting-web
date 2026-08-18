@@ -416,7 +416,7 @@ export default function Home() {
                     </div>
                     <div className="flex flex-col gap-[6px]">
                       <h2 className="font-bold text-slate-800 text-base">Giao Diện Người Chủ Trì</h2>
-                      <p className="text-xs text-slate-500">Nhập danh sách đội trong file <code className="bg-slate-100 px-1 py-0.5 rounded font-mono font-bold">public/teams.json</code>. Nhấp nút Bắt đầu để kích hoạt hệ thống.</p>
+                      <p className="text-xs text-slate-500">Nhấp nút Bắt đầu để kích hoạt hệ thống bình chọn.</p>
                     </div>
                     <button
                       onClick={() => sendHostAction("START", { durationSeconds: duration })}
