@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
     const result = await runTransaction(db, async (transaction) => {
       const sessionSnap = await transaction.get(sessionDocRef);
       if (!sessionSnap.exists()) {
-        return { error: "Phiên bầu chọn chưa được khởi tạo!" };
+        return { error: "The voting session has not been initialized!" };
       }
 
       const session = sessionSnap.data() as SessionState;
@@ -192,22 +192,22 @@ export async function POST(req: NextRequest) {
       // 1. Check if IP has already voted
       if (votedIps[sanitizedIp]) {
         return { 
-          error: "Thiết bị của bạn đã thực hiện bình chọn trước đó!" 
+          error: "Your device has already cast a vote!" 
         };
       }
 
       if (!session.votingStarted) {
-        return { error: "Cuộc bình chọn chưa bắt đầu!" };
+        return { error: "Voting has not started yet!" };
       }
 
       // If timer is running, check end time. If paused, check remaining time.
       if (session.timerRunning) {
         if (session.endTime && Date.now() > session.endTime) {
-          return { error: "Thời gian bình chọn đã kết thúc!" };
+          return { error: "Voting time has ended!" };
         }
       } else {
         if (session.pausedTimeLeft <= 0) {
-          return { error: "Thời gian bình chọn đã kết thúc!" };
+          return { error: "Voting time has ended!" };
         }
       }
 
@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
 
   } catch (err) {
     console.error("Firestore transaction error during vote:", err);
-    return NextResponse.json({ error: "Giao dịch cơ sở dữ liệu thất bại!" }, { status: 500 });
+    return NextResponse.json({ error: "Database transaction failed!" }, { status: 500 });
   }
 }
 

@@ -30,7 +30,6 @@ const ADMIN_PASSWORD = "123456";
 
 export default function Home() {
   // Data States
-  const [title, setTitle] = useState<string>("Bình Chọn Đội Tuyển Xuất Sắc");
   const [duration, setDuration] = useState<number>(300);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamNamesConfig, setTeamNamesConfig] = useState<string[]>([]);
@@ -74,7 +73,6 @@ export default function Home() {
         const configRes = await fetch("/teams.json");
         if (configRes.ok) {
           const config = await configRes.json();
-          setTitle(config.title || "Bình Chọn Đội Tuyển Xuất Sắc");
           setDuration(config.votingDurationSeconds || 300);
           setTeamNamesConfig(config.teams || []);
         }
@@ -253,14 +251,14 @@ export default function Home() {
       if (!res.ok) {
         // Revert optimistic update on failure
         setHasVoted(null);
-        setErrorMessage(data.error || "Có lỗi xảy ra!");
+        setErrorMessage(data.error || "Something went wrong!");
         setTimeout(() => setErrorMessage(null), 5000);
       }
     } catch (err) {
       console.error(err);
       // Revert optimistic update on error
       setHasVoted(null);
-      setErrorMessage("Không thể kết nối đến máy chủ!");
+      setErrorMessage("Unable to connect to server!");
       setTimeout(() => setErrorMessage(null), 5000);
     }
   };
@@ -313,17 +311,17 @@ export default function Home() {
   // Victory Banner: only reveals details to host after timer ends
   const renderVictoryText = () => {
     if (!isHost) {
-      return "Victory: (có thể là team của bạn)";
+      return "Victory: (could be your team)";
     }
     
     if (timeLeft > 0 || !votingStarted) {
-      return "Victory: (có thể là team của bạn)";
+      return "Victory: (could be your team)";
     } else {
       const winner = getWinner();
       if (winner && totalVotes > 0) {
         return `Victory: ${winner.name}`;
       } else {
-        return "Victory: Chưa có đội chiến thắng (0 phiếu)";
+        return "Victory: No votes cast yet";
       }
     }
   };
@@ -378,16 +376,12 @@ export default function Home() {
 
             {/* Title & Status indicator */}
             <div className="flex flex-col items-center gap-[12px]">
-              <h1 className="text-xl md:text-2xl font-extrabold text-slate-800 tracking-tight leading-tight">
-                {title}
-              </h1>
-
               {/* Timer Badge */}
               {votingStarted && (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-[4px]">
                   <Timer className={`w-3.5 h-3.5 ${timerRunning && timeLeft > 0 ? "text-[#369d5c] animate-spin-slow" : "text-slate-400"}`} />
                   <span className="text-xs font-semibold tracking-wider font-mono text-slate-700">
-                    {timeLeft > 0 ? formatTime(timeLeft) : "Thời gian đã hết"}
+                    {timeLeft > 0 ? formatTime(timeLeft) : "Time's up"}
                   </span>
                   <span className={`inline-block w-1.5 h-1.5 rounded-full ${timeLeft > 0 ? (timerRunning ? "bg-[#369d5c] animate-ping" : "bg-amber-400") : "bg-rose-500"}`} />
                 </div>
@@ -415,14 +409,14 @@ export default function Home() {
                       <Settings className="w-6 h-6 animate-pulse" />
                     </div>
                     <div className="flex flex-col gap-[6px]">
-                      <h2 className="font-bold text-slate-800 text-base">Giao Diện Người Chủ Trì</h2>
-                      <p className="text-xs text-slate-500">Nhấp nút Bắt đầu để kích hoạt hệ thống bình chọn.</p>
+                      <h2 className="font-bold text-slate-800 text-base">Start Voting Session</h2>
+                      <p className="text-xs text-slate-500">Click the button below to activate the voting system.</p>
                     </div>
                     <button
                       onClick={() => sendHostAction("START", { durationSeconds: duration })}
                       className="w-full mt-2 py-2.5 px-4 bg-[#369d5c] hover:bg-[#2c854e] text-white font-bold text-sm rounded-[4px] transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer"
                     >
-                      <Play className="w-4 h-4 fill-white" /> Bắt Đầu Bình Chọn
+                      <Play className="w-4 h-4 fill-white" /> Start Voting
                     </button>
                   </div>
                 ) : (
@@ -432,11 +426,11 @@ export default function Home() {
                       <Users className="w-6 h-6" />
                     </div>
                     <div className="flex flex-col gap-[6px]">
-                      <h2 className="font-bold text-slate-700 text-sm md:text-base">Chờ Kích Hoạt Bình Chọn</h2>
-                      <p className="text-xs text-slate-400">Cuộc bình chọn chưa bắt đầu. Vui lòng đợi Người chủ trì (Ban tổ chức) bắt đầu phiên biểu quyết.</p>
+                      <h2 className="font-bold text-slate-700 text-sm md:text-base">Voting Session Coming Up</h2>
+                      <p className="text-xs text-slate-400">Please wait for the host to start the voting session.</p>
                     </div>
                     <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-amber-50 text-amber-600 border border-amber-100 text-[10px] font-bold rounded-[4px] uppercase animate-pulse">
-                      Đang kết nối hệ thống
+                      Waiting to Begin
                     </span>
                   </div>
                 )}
@@ -445,8 +439,8 @@ export default function Home() {
                 {!isHost && (
                   <form onSubmit={handleHostLogin} className="w-full max-w-xs mt-6 pt-4 border-t border-slate-100 flex flex-col gap-[6px]">
                     <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                      <span>Dành cho Người chủ trì:</span>
-                      {passwordError && <span className="text-rose-500 font-bold">Mật khẩu sai!</span>}
+                      <span>Host access:</span>
+                      {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
                     </div>
                     <div className="flex items-center gap-[6px]">
                       <div className="relative flex-1">
@@ -455,7 +449,7 @@ export default function Home() {
                           type="password"
                           value={passwordInput}
                           onChange={(e) => setPasswordInput(e.target.value)}
-                          placeholder="Mật khẩu..."
+                          placeholder="Password..."
                           className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400"
                         />
                       </div>
@@ -479,9 +473,9 @@ export default function Home() {
                 {/* Total count details (Shown ONLY to Host to keep voter UI clean & vote-free) */}
                 {isHost && (
                   <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-1.5 text-slate-500 font-medium shrink-0">
-                    <span className="flex items-center gap-1"><Settings className="w-3 h-3 text-[#369d5c]" /> Giao diện Chủ trì (Live Results):</span>
+                    <span className="flex items-center gap-1"><Settings className="w-3 h-3 text-[#369d5c]" /> Host View (Live Results):</span>
                     <span className="text-slate-800 font-bold bg-[#369d5c]/5 border border-[#369d5c]/15 px-2.5 py-0.5 rounded-[4px]">
-                      {totalVotes.toLocaleString()} phiếu bầu
+                      {totalVotes.toLocaleString()} votes
                     </span>
                   </div>
                 )}
@@ -520,7 +514,7 @@ export default function Home() {
                           /* Host gets visual stats, vote counts & progress bars (NO percentages shown) */
                           <div className="flex items-center gap-[12px] flex-1 px-4 max-w-xs md:max-w-md">
                             <span className="text-xs text-slate-500 font-bold shrink-0">
-                              {team.votes.toLocaleString()} phiếu
+                              {team.votes.toLocaleString()} votes
                             </span>
                             <div className="flex-1 bg-slate-100 h-1.5 rounded-[4px] overflow-hidden">
                               <div 
@@ -547,7 +541,7 @@ export default function Home() {
                                   : "bg-slate-50 border-slate-100 text-slate-300 cursor-default"
                                 : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95"
                           }`}
-                          title={isUserSelection ? "Đã bình chọn" : "Bình chọn cho đội này"}
+                          title={isUserSelection ? "Voted" : "Vote for this team"}
                         >
                           <Check className={`w-4 h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
                         </button>
@@ -559,8 +553,8 @@ export default function Home() {
 
                 {/* Voter Information note */}
                 <div className="text-center text-[10px] text-slate-400 mt-2 font-medium shrink-0 flex flex-col gap-[6px]">
-                  <p>Mỗi người tham gia được bình chọn tối đa 01 lượt duy nhất.</p>
-                  <p className="text-slate-300 text-[8px]">Hệ thống bảo mật và đồng bộ hóa tự động • Thiết bị đã được xác thực</p>
+                  <p>Each participant may cast only one vote.</p>
+                  <p className="text-slate-300 text-[8px]">Secured and synchronized automatically • Device verified</p>
                 </div>
 
               </div>
@@ -581,7 +575,7 @@ export default function Home() {
             className="p-2 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
           >
             <Settings className="w-3.5 h-3.5" />
-            <span>Chủ Trì</span>
+            <span>Host</span>
           </button>
         )}
 
@@ -593,10 +587,10 @@ export default function Home() {
               sessionStorage.removeItem("voting_app_is_host");
             }}
             className="p-2 bg-rose-600 text-white rounded-[4px] hover:bg-rose-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1 text-xs font-semibold"
-            title="Thoát quyền chủ trì, chuyển thành Nhân viên"
+            title="Exit host mode"
           >
             <X className="w-3.5 h-3.5" />
-            <span>Thoát</span>
+            <span>Exit</span>
           </button>
         )}
       </div>
@@ -610,7 +604,7 @@ export default function Home() {
             <div className="flex justify-between items-center pb-2 border-b border-slate-100">
               <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wider">
                 <Settings className="w-4 h-4 text-[#369d5c]" />
-                Bảng điều khiển Chủ trì (Live)
+                Host Control Panel (Live)
               </span>
               <button 
                 onClick={() => setIsAdminOpen(false)}
@@ -622,7 +616,7 @@ export default function Home() {
 
             {/* Voting Session Toggle Control */}
             <div className="flex flex-col gap-[6px]">
-              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Trạng thái phiên biểu quyết</h3>
+              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Session Status</h3>
               <div className="flex items-center gap-2">
                 {votingStarted ? (
                   <button 
@@ -634,14 +628,14 @@ export default function Home() {
                     }}
                     className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
-                    <X className="w-3 h-3" /> Kết Thúc Bỏ Phiếu & Đăng Xuất
+                    <X className="w-3 h-3" /> End Voting & Sign Out
                   </button>
                 ) : (
                   <button 
                     onClick={() => sendHostAction("START", { durationSeconds: duration })}
                     className="px-3 py-1.5 bg-[#369d5c] hover:bg-[#2c854e] text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
-                    <Play className="w-3 h-3 fill-white" /> Kích Hoạt Phiên Bầu Chọn
+                    <Play className="w-3 h-3 fill-white" /> Activate Voting Session
                   </button>
                 )}
               </div>
@@ -650,47 +644,47 @@ export default function Home() {
             {/* Timer Management Block */}
             {votingStarted && (
               <div className="flex flex-col gap-[6px] mt-1">
-                <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Quản Lý Thời Gian</h3>
+                <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Timer Management</h3>
                 <div className="flex items-center gap-2 flex-wrap">
                   <button 
                     onClick={() => sendHostAction("TOGGLE_TIMER")}
                     className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     {timerRunning && timeLeft > 0 ? (
-                      <><Pause className="w-3 h-3" /> Tạm Dừng</>
+                      <><Pause className="w-3 h-3" /> Pause</>
                     ) : (
-                      <><Play className="w-3 h-3" /> Tiếp Tục</>
+                      <><Play className="w-3 h-3" /> Resume</>
                     )}
                   </button>
                   <button 
                     onClick={() => sendHostAction("ADJUST_TIMER", { seconds: 60 })}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
-                    + 1 phút
+                    + 1 min
                   </button>
                   <button 
                     onClick={() => sendHostAction("ADJUST_TIMER", { seconds: -60 })}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
-                    - 1 phút
+                    - 1 min
                   </button>
                   <button 
                     onClick={() => sendHostAction("END_NOW")}
                     className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
-                    Hết giờ ngay (0s)
+                    End Now (0s)
                   </button>
                 </div>
                 
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className="text-slate-500 text-xs font-medium">Đặt lại timer:</span>
+                  <span className="text-slate-500 text-xs font-medium">Reset timer:</span>
                   {[60, 300, 600].map(s => (
                     <button 
                       key={s}
                       onClick={() => sendHostAction("START", { durationSeconds: s })}
                       className="px-2 py-1 bg-[#369d5c]/10 text-[#369d5c] font-semibold text-xs rounded-[4px] hover:bg-[#369d5c]/20 cursor-pointer"
                     >
-                      {s / 60} Phút
+                      {s / 60} min
                   </button>
                   ))}
                 </div>
@@ -699,14 +693,14 @@ export default function Home() {
 
             {/* Vote Management Block */}
             <div className="flex flex-col gap-[6px] mt-1">
-              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Thiết lập bình chọn</h3>
+              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Voting Settings</h3>
               <div className="flex items-center gap-2 flex-wrap">
                 <button 
                   onClick={() => sendHostAction("RESET_VOTES")}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm"
-                  title="Thiết lập lại toàn bộ số phiếu bầu và mở khóa quyền bầu chọn"
+                  title="Reset all votes and unlock voting for all devices"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" /> Khởi tạo lại vòng biểu quyết
+                  <RefreshCw className="w-3.5 h-3.5" /> Reset Round
                 </button>
                 <button 
                   onClick={() => {
@@ -715,15 +709,15 @@ export default function Home() {
                   }}
                   className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-[4px] cursor-pointer"
                 >
-                  Xóa Cache Trình Duyệt
+                  Clear Browser Cache
                 </button>
               </div>
             </div>
 
             {/* Description Text */}
             <div className="p-3 bg-slate-50 border border-slate-100 text-slate-500 text-[11px] rounded-[4px] leading-relaxed mt-2">
-              <p className="font-bold text-slate-700 mb-0.5">Quy tắc bình chọn:</p>
-              Hệ thống tự động ghi nhận lượt tham gia của từng thiết bị để đảm bảo tính công bằng. Dù tải lại trang hay xóa cache trình duyệt, thiết bị đó vẫn không thể bầu chọn lại trừ khi bấm nút <strong>&quot;Khởi tạo lại vòng biểu quyết&quot;</strong> ở trên.
+              <p className="font-bold text-slate-700 mb-0.5">How voting works:</p>
+              Each device is automatically tracked to ensure fairness. Even after reloading the page or clearing browser cache, the device cannot vote again unless the host clicks <strong>&quot;Reset Round&quot;</strong> above.
             </div>
 
           </div>
