@@ -1,0 +1,14 @@
+{
+  "votingStarted": true,
+  "timerRunning": false,
+  "endTime": 1787023729323,
+  "duration": 300,
+  "title": "Bình Chọn Đội Tuyển Xuất Sắc",
+  "votedIps": {},
+  "votes": {
+    "team-1": 0,
+    "team-2": 0,
+    "team-3": 0,
+    "team-4": 0
+  }
+}
