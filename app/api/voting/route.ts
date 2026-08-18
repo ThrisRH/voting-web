@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
       // 1. Check if IP has already voted
       if (votedIps[sanitizedIp]) {
         return { 
-          error: `Thiết bị của bạn (IP: ${ip}) đã thực hiện bình chọn trước đó!` 
+          error: "Thiết bị của bạn đã thực hiện bình chọn trước đó!" 
         };
       }
 

@@ -455,7 +455,7 @@ export default function Home() {
                           type="password"
                           value={passwordInput}
                           onChange={(e) => setPasswordInput(e.target.value)}
-                          placeholder="Mật khẩu (123456)"
+                          placeholder="Mật khẩu..."
                           className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400"
                         />
                       </div>
@@ -560,7 +560,7 @@ export default function Home() {
                 {/* Voter Information note */}
                 <div className="text-center text-[10px] text-slate-400 mt-2 font-medium shrink-0 flex flex-col gap-[6px]">
                   <p>Mỗi người tham gia được bình chọn tối đa 01 lượt duy nhất.</p>
-                  <p className="text-slate-300 text-[8px]">Hệ thống bảo mật và đồng bộ hóa qua Firebase Cloud • IP thiết bị: {clientIp}</p>
+                  <p className="text-slate-300 text-[8px]">Hệ thống bảo mật và đồng bộ hóa tự động • Thiết bị đã được xác thực</p>
                 </div>
 
               </div>
@@ -699,14 +699,14 @@ export default function Home() {
 
             {/* Vote Management Block */}
             <div className="flex flex-col gap-[6px] mt-1">
-              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Khôi Phục Khóa IP & Phiếu Bầu</h3>
+              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Thiết lập bình chọn</h3>
               <div className="flex items-center gap-2 flex-wrap">
                 <button 
                   onClick={() => sendHostAction("RESET_VOTES")}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm"
-                  title="Xóa sạch các lượt bầu chọn đã ghi nhận và reset khóa IP"
+                  title="Thiết lập lại toàn bộ số phiếu bầu và mở khóa quyền bầu chọn"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" /> Reset Số Phiếu & Mở Khóa IP
+                  <RefreshCw className="w-3.5 h-3.5" /> Khởi tạo lại vòng biểu quyết
                 </button>
                 <button 
                   onClick={() => {
@@ -722,8 +722,8 @@ export default function Home() {
 
             {/* Description Text */}
             <div className="p-3 bg-slate-50 border border-slate-100 text-slate-500 text-[11px] rounded-[4px] leading-relaxed mt-2">
-              <p className="font-bold text-slate-700 mb-0.5">Khóa IP hoạt động như thế nào:</p>
-              Hệ thống ghi nhận địa chỉ IP của từng thiết bị vào Firebase. Dù tải lại trang hay xóa cache trình duyệt, thiết bị đó vẫn không thể bầu chọn lại trừ khi bấm nút <strong>&quot;Reset Số Phiếu &amp; Mở Khóa IP&quot;</strong> ở trên.
+              <p className="font-bold text-slate-700 mb-0.5">Quy tắc bình chọn:</p>
+              Hệ thống tự động ghi nhận lượt tham gia của từng thiết bị để đảm bảo tính công bằng. Dù tải lại trang hay xóa cache trình duyệt, thiết bị đó vẫn không thể bầu chọn lại trừ khi bấm nút <strong>&quot;Khởi tạo lại vòng biểu quyết&quot;</strong> ở trên.
             </div>
 
           </div>
