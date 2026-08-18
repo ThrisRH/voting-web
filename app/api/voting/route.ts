@@ -7,10 +7,7 @@ import {
   getDoc, 
   setDoc, 
   updateDoc, 
-  runTransaction,
-  collection,
-  getDocs,
-  writeBatch
+  runTransaction
 } from "firebase/firestore";
 
 // Define constants
@@ -25,6 +22,7 @@ interface SessionState {
   duration: number;
   title: string;
   votes: Record<string, number>;
+  votedIps: Record<string, string>; // IP -> teamId mapping
 }
 
 // Helper to get client IP address
@@ -75,7 +73,8 @@ async function initializeFirestoreStore() {
     pausedTimeLeft: configDuration,
     duration: configDuration,
     title: configTitle,
-    votes: initialVotes
+    votes: initialVotes,
+    votedIps: {}
   };
 
   const sessionDocRef = doc(db, "sessions", "voting_session");
@@ -90,6 +89,9 @@ async function getSessionDoc(): Promise<SessionState> {
 
   if (docSnap.exists()) {
     const data = docSnap.data() as SessionState;
+    if (!data.votedIps) {
+      data.votedIps = {};
+    }
     
     // Auto-update config if teams.json changed
     let configTeams: string[] = [];
@@ -147,10 +149,8 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const sanitizedIp = ip.replace(/\//g, "_");
-  const ipDocRef = doc(db, "voted_ips", sanitizedIp);
-  const ipSnap = await getDoc(ipDocRef);
-  const hasVotedFor = ipSnap.exists() ? ipSnap.data().teamId : null;
+  const sanitizedIp = ip.replace(/\./g, "_").replace(/\//g, "_");
+  const hasVotedFor = store.votedIps && store.votedIps[sanitizedIp] ? store.votedIps[sanitizedIp] : null;
 
   return NextResponse.json({
     title: store.title,
@@ -176,27 +176,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing teamId" }, { status: 400 });
   }
 
-  const sanitizedIp = ip.replace(/\//g, "_");
-  const ipDocRef = doc(db, "voted_ips", sanitizedIp);
+  const sanitizedIp = ip.replace(/\./g, "_").replace(/\//g, "_");
   const sessionDocRef = doc(db, "sessions", "voting_session");
 
   try {
     const result = await runTransaction(db, async (transaction) => {
-      // 1. Check if IP has already voted
-      const ipSnap = await transaction.get(ipDocRef);
-      if (ipSnap.exists()) {
-        return { 
-          error: `Thiết bị của bạn (IP: ${ip}) đã thực hiện bình chọn trước đó!` 
-        };
-      }
-
-      // 2. Read session config
       const sessionSnap = await transaction.get(sessionDocRef);
       if (!sessionSnap.exists()) {
         return { error: "Phiên bầu chọn chưa được khởi tạo!" };
       }
 
       const session = sessionSnap.data() as SessionState;
+      const votedIps = session.votedIps || {};
+
+      // 1. Check if IP has already voted
+      if (votedIps[sanitizedIp]) {
+        return { 
+          error: `Thiết bị của bạn (IP: ${ip}) đã thực hiện bình chọn trước đó!` 
+        };
+      }
 
       if (!session.votingStarted) {
         return { error: "Cuộc bình chọn chưa bắt đầu!" };
@@ -213,13 +211,18 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 3. Update vote count
+      // 2. Update vote count and register IP lock
       const updatedVotes = { ...session.votes };
       updatedVotes[teamId] = (updatedVotes[teamId] || 0) + 1;
+      
+      const updatedVotedIps = { ...votedIps };
+      updatedVotedIps[sanitizedIp] = teamId;
 
-      // 4. Perform database updates
-      transaction.update(sessionDocRef, { votes: updatedVotes });
-      transaction.set(ipDocRef, { teamId, votedAt: Date.now() });
+      // 3. Perform database updates
+      transaction.update(sessionDocRef, { 
+        votes: updatedVotes,
+        votedIps: updatedVotedIps
+      });
 
       return { success: true };
     });
@@ -264,7 +267,7 @@ export async function PUT(req: NextRequest) {
     });
   } 
   else if (action === "RESET_ALL") {
-    // 1. Reset voting session variables
+    // Reset voting session variables and clear votedIps map
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
@@ -275,47 +278,24 @@ export async function PUT(req: NextRequest) {
       timerRunning: false,
       endTime: null,
       pausedTimeLeft: store.duration,
-      votes: resetVotes
+      votes: resetVotes,
+      votedIps: {}
     });
-
-    // 2. Clear voted IPs collection in a batch
-    try {
-      const ipsSnapshot = await getDocs(collection(db, "voted_ips"));
-      const batch = writeBatch(db);
-      ipsSnapshot.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-    } catch (e) {
-      console.error("Failed to clear voted_ips collection:", e);
-    }
   }
   else if (action === "RESET_VOTES") {
-    // 1. Reset votes only
+    // Reset votes only and clear votedIps map
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
     });
 
     await updateDoc(sessionDocRef, {
-      votes: resetVotes
+      votes: resetVotes,
+      votedIps: {}
     });
-
-    // 2. Clear IP locks
-    try {
-      const ipsSnapshot = await getDocs(collection(db, "voted_ips"));
-      const batch = writeBatch(db);
-      ipsSnapshot.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-    } catch (e) {
-      console.error("Failed to clear voted_ips collection:", e);
-    }
   }
   else if (action === "TOGGLE_TIMER") {
     if (store.timerRunning) {
-      // Pause: calculate remaining seconds and save it
       if (store.endTime) {
         const remaining = Math.max(0, Math.floor((store.endTime - Date.now()) / 1000));
         await updateDoc(sessionDocRef, {
@@ -325,7 +305,6 @@ export async function PUT(req: NextRequest) {
         });
       }
     } else {
-      // Resume: set new endTime based on pausedTimeLeft
       const targetEndTime = Date.now() + store.pausedTimeLeft * 1000;
       await updateDoc(sessionDocRef, {
         timerRunning: true,

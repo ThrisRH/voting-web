@@ -124,6 +124,13 @@ export default function Home() {
           
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
+
+          // Update hasVoted based on our clientIp inside votedIps map
+          if (clientIp) {
+            const sanitizedIp = clientIp.replace(/\./g, "_").replace(/\//g, "_");
+            const votedIpsMap = data.votedIps || {};
+            setHasVoted(votedIpsMap[sanitizedIp] || null);
+          }
         }
       },
       (error) => {
@@ -132,24 +139,7 @@ export default function Home() {
     );
 
     return unsubscribe;
-  }, [loading, teamNamesConfig, duration]);
-
-  // Sync client IP vote state with Firestore when the document updates
-  useEffect(() => {
-    if (!clientIp || loading) return;
-
-    const sanitizedIp = clientIp.replace(/\//g, "_");
-    const ipDocRef = doc(db, "voted_ips", sanitizedIp);
-    const unsubscribe = onSnapshot(ipDocRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setHasVoted(snapshot.data().teamId || null);
-      } else {
-        setHasVoted(null);
-      }
-    });
-
-    return unsubscribe;
-  }, [clientIp, loading]);
+  }, [loading, teamNamesConfig, duration, clientIp]);
 
   // Local Timer countdown for smooth display
   useEffect(() => {
