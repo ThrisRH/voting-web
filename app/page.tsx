@@ -322,8 +322,12 @@ export default function Home() {
     }
   };
 
-  // Victory Banner: reveals winning team after timer ends
+  // Victory Banner: reveals winning team to Host ONLY after timer ends
   const renderVictoryText = () => {
+    if (!isHost) {
+      return "Victory: (could be your team)";
+    }
+    
     if (!votingStarted || timeLeft > 0) {
       return "Victory: (could be your team)";
     }
@@ -333,11 +337,7 @@ export default function Home() {
       return "No votes cast";
     }
 
-    if (isHost) {
-      return `Victory: ${winner.name}`;
-    } else {
-      return `The winning team is ${winner.name}`;
-    }
+    return `Victory: ${winner.name}`;
   };
 
   return (
@@ -452,19 +452,21 @@ export default function Home() {
                       {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
                     </div>
                     <div className="flex items-center gap-[6px]">
-                      <div className="relative flex-1">
-                        <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                      <div className="relative flex-1 flex items-center">
+                        <div className="absolute left-2.5 inset-y-0 flex items-center pointer-events-none text-slate-400">
+                          <Lock className="w-3.5 h-3.5 shrink-0" />
+                        </div>
                         <input
                           type="password"
                           value={passwordInput}
                           onChange={(e) => setPasswordInput(e.target.value)}
                           placeholder="Password..."
-                          className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400"
+                          className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
                         />
                       </div>
                       <button
                         type="submit"
-                        className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer"
+                        className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
                       >
                         <ArrowRight className="w-4 h-4" />
                       </button>
@@ -518,13 +520,13 @@ export default function Home() {
                           </span>
                         </div>
 
-                        {/* Middle: Vote representation (Host ONLY gets progress bars; Voters get direct layout) */}
+                        {/* Middle: Vote representation (Host gets visual vote counts & progress bars) */}
                         {isHost && (
-                          <div className="flex items-center gap-2 sm:gap-3 px-1 sm:px-3 shrink-0">
-                            <span className="text-[10px] sm:text-xs text-slate-500 font-bold shrink-0">
+                          <div className="flex items-center gap-2 sm:gap-3 px-1 sm:px-3 flex-1 max-w-[140px] sm:max-w-xs md:max-w-md justify-end">
+                            <span className="text-[11px] sm:text-xs text-slate-600 font-bold shrink-0">
                               {team.votes.toLocaleString()} <span className="hidden sm:inline">votes</span>
                             </span>
-                            <div className="w-12 sm:w-24 md:w-32 bg-slate-100 h-1.5 rounded-[4px] overflow-hidden hidden xs:block">
+                            <div className="flex-1 bg-slate-100 h-2 rounded-[4px] overflow-hidden border border-slate-200/50 min-w-[40px]">
                               <div 
                                 className="bg-[#369d5c] h-full rounded-[4px] transition-all duration-500"
                                 style={{ width: `${percent}%` }}

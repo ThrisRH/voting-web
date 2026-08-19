@@ -49,7 +49,7 @@ function getClientIp(req: NextRequest): string {
 async function initializeFirestoreStore() {
   let configTitle = "Bình Chọn Đội Tuyển Xuất Sắc";
   let configDuration = 300;
-  let configTeams: string[] = ["Nhóm 1", "Nhóm 2", "Nhóm 3", "Nhóm 4"];
+  let configTeams: string[] = ["Team 1", "Team 2", "Team 3", "Team 4"];
 
   try {
     if (fs.existsSync(CONFIG_FILE_PATH)) {
