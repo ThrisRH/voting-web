@@ -15,7 +15,7 @@ import {
   Users,
   AlertCircle,
   LogOut,
-  ChevronRight
+  ShieldCheck
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { db } from "../../lib/firebase";
@@ -29,7 +29,7 @@ interface Team {
 
 const ADMIN_PASSWORD = "123456";
 
-export default function HostPage() {
+export default function HostControlPage() {
   // Data States
   const [duration, setDuration] = useState<number>(300);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -219,7 +219,7 @@ export default function HostPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-sm">
-        <RefreshCw className="w-5 h-5 animate-spin text-[#369d5c] mr-2" /> Loading Host Dashboard...
+        <RefreshCw className="w-5 h-5 animate-spin text-[#369d5c] mr-2" /> Loading Secure Host Dashboard...
       </div>
     );
   }
@@ -242,8 +242,8 @@ export default function HostPage() {
         {/* Header Bar */}
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white rounded-b-none">
           <div className="flex items-center gap-2">
-            <Settings className="w-5 h-5 text-[#369d5c]" />
-            <h1 className="font-bold text-sm sm:text-base">Host Control Dashboard</h1>
+            <ShieldCheck className="w-5 h-5 text-[#369d5c]" />
+            <h1 className="font-bold text-sm sm:text-base">Secure Host Control Panel</h1>
           </div>
           {isHost && (
             <button
@@ -262,8 +262,8 @@ export default function HostPage() {
               <Lock className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-800">Host Access Verification</h2>
-              <p className="text-xs text-slate-500 mt-1">Please enter the host password to manage the voting session.</p>
+              <h2 className="text-lg font-bold text-slate-800">Secure Host Verification</h2>
+              <p className="text-xs text-slate-500 mt-1">Please enter the secret host password to manage the voting session.</p>
             </div>
 
             <form onSubmit={handleHostLogin} className="w-full max-w-xs flex flex-col gap-3 mt-2">
@@ -338,7 +338,7 @@ export default function HostPage() {
             <div className="p-4 bg-slate-900 text-white rounded-[4px] flex flex-col gap-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                  <Settings className="w-4 h-4 text-[#369d5c]" /> Session Operations
+                  <Settings className="w-4 h-4 text-[#369d5c]" /> Host Controls
                 </span>
                 {!votingStarted ? (
                   <button 
@@ -467,8 +467,8 @@ export default function HostPage() {
 
             {/* Host Note */}
             <div className="text-center text-[10px] text-slate-400 font-medium pt-2 border-t border-slate-100 flex items-center justify-center gap-1">
-              <Award className="w-3.5 h-3.5 text-[#369d5c]" />
-              Host Dashboard endpoint active at <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600 font-mono">/host</code>
+              <ShieldCheck className="w-3.5 h-3.5 text-[#369d5c]" />
+              Obfuscated Host Dashboard endpoint active at <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600 font-mono">/host-control-panel-8892</code>
             </div>
 
           </div>
