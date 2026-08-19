@@ -138,10 +138,14 @@ export default function Home() {
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
-          // Update hasVoted based on our voterId inside votedDevices map
-          const sanitizedVoterId = voterId.replace(/[^a-zA-Z0-9_-]/g, "_");
+          // Update hasVoted based on our voterId or clientIp inside votedDevices / votedIps map
+          const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+          const sanitizedIp = clientIp ? clientIp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
           const votedDevicesMap = data.votedDevices || {};
-          setHasVoted(votedDevicesMap[sanitizedVoterId] || null);
+          const votedIpsMap = data.votedIps || {};
+
+          const votedFor = (sanitizedVoterId && votedDevicesMap[sanitizedVoterId]) || (sanitizedIp && votedIpsMap[sanitizedIp]) || null;
+          setHasVoted(votedFor);
         }
       },
       (error) => {
@@ -150,7 +154,7 @@ export default function Home() {
     );
 
     return unsubscribe;
-  }, [loading, teamNamesConfig, duration, voterId]);
+  }, [loading, teamNamesConfig, duration, voterId, clientIp]);
 
   // Local Timer countdown for smooth display
   useEffect(() => {

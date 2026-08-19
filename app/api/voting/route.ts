@@ -157,9 +157,11 @@ export async function GET(req: NextRequest) {
   });
 
   const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-  const hasVotedFor = store.votedDevices && sanitizedVoterId && store.votedDevices[sanitizedVoterId]
-    ? store.votedDevices[sanitizedVoterId]
-    : null;
+  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  
+  const votedByDevice = store.votedDevices && sanitizedVoterId ? store.votedDevices[sanitizedVoterId] : null;
+  const votedByIp = store.votedIps && sanitizedIp ? store.votedIps[sanitizedIp] : null;
+  const hasVotedFor = votedByDevice || votedByIp || null;
 
   return NextResponse.json({
     title: store.title,
@@ -175,7 +177,7 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST handler: casts a vote for a team based on unique voterId
+// POST handler: casts a vote for a team based on unique voterId or clientIp
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
   const body = await req.json();
@@ -185,7 +187,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing teamId" }, { status: 400 });
   }
 
-  const deviceKey = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : ip.replace(/\./g, "_").replace(/\//g, "_");
+  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  const deviceKey = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : sanitizedIp;
   const sessionDocRef = doc(db, "sessions", "voting_session");
 
   try {
@@ -197,11 +200,12 @@ export async function POST(req: NextRequest) {
 
       const session = sessionSnap.data() as SessionState;
       const votedDevices = session.votedDevices || {};
+      const votedIps = session.votedIps || {};
 
-      // 1. Check if device has already voted
-      if (votedDevices[deviceKey]) {
+      // 1. Check if device or IP address has already voted
+      if ((deviceKey && votedDevices[deviceKey]) || (sanitizedIp && votedIps[sanitizedIp])) {
         return { 
-          error: "Your device has already cast a vote!" 
+          error: "Your device or IP address has already cast a vote!" 
         };
       }
 
@@ -220,16 +224,19 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 2. Update vote count and register device lock
+      // 2. Update vote count and register device & IP lock
       const updatedVotes = { ...session.votes };
       updatedVotes[teamId] = (updatedVotes[teamId] || 0) + 1;
       
       const updatedVotedDevices = { ...votedDevices };
-      updatedVotedDevices[deviceKey] = teamId;
+      if (deviceKey) {
+        updatedVotedDevices[deviceKey] = teamId;
+      }
 
-      const sanitizedIp = ip.replace(/\./g, "_").replace(/\//g, "_");
-      const updatedVotedIps = { ...(session.votedIps || {}) };
-      updatedVotedIps[sanitizedIp] = teamId;
+      const updatedVotedIps = { ...votedIps };
+      if (sanitizedIp) {
+        updatedVotedIps[sanitizedIp] = teamId;
+      }
 
       // 3. Perform database updates
       transaction.update(sessionDocRef, { 
