@@ -100,8 +100,8 @@ export default function Home() {
 
     initializeClient();
 
-    // Check host status in sessionStorage
-    const hostFlag = sessionStorage.getItem("voting_app_is_host") === "true";
+    // Check host status in localStorage
+    const hostFlag = localStorage.getItem("voting_app_is_host") === "true";
     setIsHost(hostFlag);
   }, [voterId]);
 
@@ -320,7 +320,7 @@ export default function Home() {
     if (passwordInput === ADMIN_PASSWORD) {
       setIsHost(true);
       setPasswordError(false);
-      sessionStorage.setItem("voting_app_is_host", "true");
+      localStorage.setItem("voting_app_is_host", "true");
     } else {
       setPasswordError(true);
     }
@@ -595,7 +595,7 @@ export default function Home() {
             onClick={() => {
               setIsHost(false);
               setIsAdminOpen(false);
-              sessionStorage.removeItem("voting_app_is_host");
+              localStorage.removeItem("voting_app_is_host");
             }}
             className="p-2 bg-rose-600 text-white rounded-[4px] hover:bg-rose-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1 text-xs font-semibold"
             title="Exit host mode"
@@ -635,7 +635,7 @@ export default function Home() {
                       await sendHostAction("RESET_ALL");
                       setIsHost(false);
                       setIsAdminOpen(false);
-                      sessionStorage.removeItem("voting_app_is_host");
+                      localStorage.removeItem("voting_app_is_host");
                     }}
                     className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
