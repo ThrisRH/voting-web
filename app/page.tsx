@@ -245,7 +245,7 @@ export default function Home() {
 
   // Submit Vote through secure API to check device ID
   const handleVote = async (teamId: string) => {
-    if (!votingStarted || timeLeft === 0) return;
+    if (isHost || !votingStarted || timeLeft === 0) return;
     if (hasVoted) return;
     if (!voterId) return;
 
@@ -322,21 +322,21 @@ export default function Home() {
     }
   };
 
-  // Victory Banner: only reveals details to host after timer ends
+  // Victory Banner: reveals winning team after timer ends
   const renderVictoryText = () => {
-    if (!isHost) {
+    if (!votingStarted || timeLeft > 0) {
       return "Victory: (could be your team)";
     }
     
-    if (timeLeft > 0 || !votingStarted) {
-      return "Victory: (could be your team)";
+    const winner = getWinner();
+    if (!winner || totalVotes === 0) {
+      return "No votes cast";
+    }
+
+    if (isHost) {
+      return `Victory: ${winner.name}`;
     } else {
-      const winner = getWinner();
-      if (winner && totalVotes > 0) {
-        return `Victory: ${winner.name}`;
-      } else {
-        return "Victory: No votes cast yet";
-      }
+      return `The winning team is ${winner.name}`;
     }
   };
 
@@ -354,34 +354,29 @@ export default function Home() {
       )}
 
       {/* Main viewport area */}
-      <main className="flex-1 flex flex-col justify-center items-center p-4 md:p-6 overflow-hidden w-full max-w-2xl mx-auto">
+      <main className="flex-1 flex flex-col justify-center items-center p-2 sm:p-4 md:p-6 overflow-hidden w-full max-w-2xl mx-auto">
         
         {/* Core Container Card */}
-        <div className="w-full bg-white border border-[#e2e8f0] p-5 md:p-8 shadow-sm rounded-[4px] flex flex-col overflow-hidden max-h-full">
+        <div className="w-full bg-white border border-[#e2e8f0] p-3 sm:p-5 md:p-8 shadow-sm rounded-[4px] flex flex-col overflow-hidden max-h-full">
           
           {/* HEADER (12px gap) */}
           <div className="flex flex-col items-center gap-[12px] w-full text-center shrink-0">
             
-            {/* Logo */}
-            <div className="relative h-14 md:h-18 flex items-center justify-center">
+            {/* Event Hero Banner (Full Size - No Cropping) */}
+            <div className="w-full relative rounded-[6px] overflow-hidden border border-slate-200/80 shadow-sm bg-slate-50 flex items-center justify-center shrink-0">
               <img
-                src="/logo.png"
-                alt="Voting App Logo"
-                className="h-full w-auto object-contain mx-auto"
+                src="/banner.jpg"
+                alt="O.TECH Company Trip 2026 - Break The Limits, Win The Future"
+                className="w-full h-auto object-contain block"
                 onError={(e) => {
                   const target = e.currentTarget as HTMLImageElement;
                   target.style.display = "none";
                 }}
               />
-              <noscript>
-                <div className="w-12 h-12 rounded-[4px] bg-[#369d5c]/10 border border-[#369d5c] flex items-center justify-center">
-                  <Award className="w-6 h-6 text-[#369d5c]" />
-                </div>
-              </noscript>
             </div>
 
             {/* Victory Text Banner */}
-            <div className="w-full max-w-sm px-4 py-1.5 bg-[#f4faf6] border border-[#369d5c]/10 text-[#369d5c] font-semibold text-xs md:text-sm rounded-[4px] flex items-center justify-center gap-1.5 animate-pulse shrink-0">
+            <div className="w-full max-w-sm px-3 sm:px-4 py-1.5 bg-[#f4faf6] border border-[#369d5c]/10 text-[#369d5c] font-semibold text-xs md:text-sm rounded-[4px] flex items-center justify-center gap-1.5 animate-pulse shrink-0">
               <Trophy className="w-3.5 h-3.5 shrink-0 text-[#369d5c]" />
               <span className="tracking-wide text-center truncate">
                 {renderVictoryText()}
@@ -404,8 +399,8 @@ export default function Home() {
 
           </div>
 
-          {/* SPACING: 32px gap between header and content card area */}
-          <div className="mt-[32px] flex-1 flex flex-col gap-[12px] overflow-hidden">
+          {/* SPACING: 20px - 32px gap between header and content card area */}
+          <div className="mt-4 sm:mt-[32px] flex-1 flex flex-col gap-[12px] overflow-hidden">
             
             {loading ? (
               <div className="flex-1 flex justify-center items-center py-8">
@@ -414,7 +409,7 @@ export default function Home() {
             ) : !votingStarted ? (
               
               /* CASE 1: Voting NOT STARTED Yet */
-              <div className="flex-1 flex flex-col justify-center items-center text-center p-4 gap-[12px]">
+              <div className="flex-1 flex flex-col justify-center items-center text-center p-2 sm:p-4 gap-[12px]">
                 
                 {isHost ? (
                   /* Host waiting view */
@@ -495,7 +490,7 @@ export default function Home() {
                 )}
 
                 {/* Team Rows list (Scrollable if overflow) */}
-                <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-[12px]">
+                <div className="flex-1 overflow-y-auto pr-0.5 flex flex-col gap-[10px] sm:gap-[12px]">
                   {teams.map((team, index) => {
                     const percent = getPercentage(team.votes);
                     const isLeading = timeLeft === 0 && getWinner()?.id === team.id && totalVotes > 0;
@@ -504,7 +499,7 @@ export default function Home() {
                     return (
                       <div 
                         key={team.id}
-                        className={`flex items-center justify-between p-3 bg-white border rounded-[4px] transition-all duration-200 relative overflow-hidden ${
+                        className={`flex items-center justify-between p-2.5 sm:p-3 bg-white border rounded-[4px] transition-all duration-200 relative overflow-hidden gap-2 ${
                           isUserSelection 
                             ? "border-[#369d5c] bg-[#369d5c]/5 ring-1 ring-[#369d5c]" 
                             : isLeading && isHost
@@ -513,51 +508,47 @@ export default function Home() {
                         }`}
                       >
                         {/* Left: Avatar + Team Name (6px gap) */}
-                        <div className="flex items-center gap-[6px] min-w-0 flex-1">
-                          <div className="w-8 h-8 flex items-center justify-center font-bold text-xs text-white rounded-[4px] shrink-0"
+                        <div className="flex items-center gap-[6px] sm:gap-2 min-w-0 flex-1">
+                          <div className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center font-bold text-xs text-white rounded-[4px] shrink-0"
                                style={{ backgroundColor: `hsl(${135 + index * 45}, 45%, 43%)` }}>
                             {team.name.charAt(0)}
                           </div>
-                          <span className="truncate font-bold text-slate-800 text-sm md:text-base" title={team.name}>
+                          <span className="font-bold text-slate-800 text-xs sm:text-sm md:text-base leading-tight break-words min-w-0" title={team.name}>
                             {team.name}
                           </span>
                         </div>
 
-                        {/* Middle: Vote representation (DIFFERENT between Host & Voter) */}
-                        {isHost ? (
-                          /* Host gets visual stats, vote counts & progress bars (NO percentages shown) */
-                          <div className="flex items-center gap-[12px] flex-1 px-4 max-w-xs md:max-w-md">
-                            <span className="text-xs text-slate-500 font-bold shrink-0">
-                              {team.votes.toLocaleString()} votes
+                        {/* Middle: Vote representation (Host ONLY gets progress bars; Voters get direct layout) */}
+                        {isHost && (
+                          <div className="flex items-center gap-2 sm:gap-3 px-1 sm:px-3 shrink-0">
+                            <span className="text-[10px] sm:text-xs text-slate-500 font-bold shrink-0">
+                              {team.votes.toLocaleString()} <span className="hidden sm:inline">votes</span>
                             </span>
-                            <div className="flex-1 bg-slate-100 h-1.5 rounded-[4px] overflow-hidden">
+                            <div className="w-12 sm:w-24 md:w-32 bg-slate-100 h-1.5 rounded-[4px] overflow-hidden hidden xs:block">
                               <div 
                                 className="bg-[#369d5c] h-full rounded-[4px] transition-all duration-500"
                                 style={{ width: `${percent}%` }}
                               />
                             </div>
                           </div>
-                        ) : (
-                          /* Employees/Voters see ABSOLUTELY NO stats (no count, no bars, no percent) */
-                          <div className="flex-1 px-4" />
                         )}
 
                         {/* Right: Checkmark Button */}
                         <button
                           onClick={() => handleVote(team.id)}
-                          disabled={timeLeft === 0 || !!hasVoted}
-                          className={`w-8 h-8 rounded-[4px] border flex items-center justify-center transition-all duration-200 shrink-0 cursor-pointer ${
-                            timeLeft === 0
+                          disabled={isHost || timeLeft === 0 || !!hasVoted}
+                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-[4px] border flex items-center justify-center transition-all duration-200 shrink-0 ${
+                            isHost || timeLeft === 0
                               ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
                               : hasVoted
                                 ? isUserSelection
                                   ? "bg-[#369d5c] border-[#369d5c] text-white cursor-default shadow-sm"
                                   : "bg-slate-50 border-slate-100 text-slate-300 cursor-default"
-                                : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95"
+                                : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95 cursor-pointer"
                           }`}
-                          title={isUserSelection ? "Voted" : "Vote for this team"}
+                          title={isHost ? "Host cannot vote" : isUserSelection ? "Voted" : "Vote for this team"}
                         >
-                          <Check className={`w-4 h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
+                          <Check className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
                         </button>
 
                       </div>
@@ -567,7 +558,7 @@ export default function Home() {
 
                 {/* Voter Information note */}
                 <div className="text-center text-[10px] text-slate-400 mt-2 font-medium shrink-0 flex flex-col gap-[6px]">
-                  <p>Each participant may cast only one vote.</p>
+                  <p>{isHost ? "Host view mode (voting disabled for host)." : "Each participant may cast only one vote."}</p>
                   <p className="text-slate-300 text-[8px]">Secured and synchronized automatically • Device verified</p>
                 </div>
 
