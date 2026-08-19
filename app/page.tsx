@@ -475,6 +475,11 @@ export default function Home() {
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     </div>
+                    <div className="text-center mt-1">
+                      <a href="/host" className="text-[10px] text-[#369d5c] hover:underline font-semibold">
+                        Host Dashboard page (/host) &rarr;
+                      </a>
+                    </div>
                   </form>
                 )}
 
