@@ -35,6 +35,7 @@ export default function Home() {
   const [teamNamesConfig, setTeamNamesConfig] = useState<string[]>([]);
   const [totalVotes, setTotalVotes] = useState<number>(0);
   const [clientIp, setClientIp] = useState<string>("");
+  const [voterId, setVoterId] = useState<string>("");
   
   // Timer States
   const [timeLeft, setTimeLeft] = useState<number>(300);
@@ -55,17 +56,31 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confettiFired, setConfettiFired] = useState<boolean>(false);
 
-  // Fetch initial config and check voter IP status once on mount
+  // Initialize voterId on client mount
   useEffect(() => {
+    let id = localStorage.getItem("voting_voter_id");
+    if (!id) {
+      id = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem("voting_voter_id", id);
+    }
+    setVoterId(id);
+  }, []);
+
+  // Fetch initial config and check voter status once voterId is initialized
+  useEffect(() => {
+    if (!voterId) return;
+
     async function initializeClient() {
       try {
-        // 1. Fetch IP status from API
-        const statusRes = await fetch("/api/voting");
+        // 1. Fetch IP & voted status from API
+        const statusRes = await fetch(`/api/voting?voterId=${encodeURIComponent(voterId)}`);
         if (statusRes.ok) {
           const data = await statusRes.json();
           setClientIp(data.clientIp || "127.0.0.1");
           if (data.hasVoted && data.votedTeamId) {
             setHasVoted(data.votedTeamId);
+          } else {
+            setHasVoted(null);
           }
         }
 
@@ -88,11 +103,11 @@ export default function Home() {
     // Check host status in sessionStorage
     const hostFlag = sessionStorage.getItem("voting_app_is_host") === "true";
     setIsHost(hostFlag);
-  }, []);
+  }, [voterId]);
 
   // Listen to Firestore changes in real-time
   useEffect(() => {
-    if (loading || teamNamesConfig.length === 0) return;
+    if (loading || teamNamesConfig.length === 0 || !voterId) return;
 
     const docRef = doc(db, "sessions", "voting_session");
     
@@ -123,12 +138,10 @@ export default function Home() {
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
-          // Update hasVoted based on our clientIp inside votedIps map
-          if (clientIp) {
-            const sanitizedIp = clientIp.replace(/\./g, "_").replace(/\//g, "_");
-            const votedIpsMap = data.votedIps || {};
-            setHasVoted(votedIpsMap[sanitizedIp] || null);
-          }
+          // Update hasVoted based on our voterId inside votedDevices map
+          const sanitizedVoterId = voterId.replace(/[^a-zA-Z0-9_-]/g, "_");
+          const votedDevicesMap = data.votedDevices || {};
+          setHasVoted(votedDevicesMap[sanitizedVoterId] || null);
         }
       },
       (error) => {
@@ -137,7 +150,7 @@ export default function Home() {
     );
 
     return unsubscribe;
-  }, [loading, teamNamesConfig, duration, clientIp]);
+  }, [loading, teamNamesConfig, duration, voterId]);
 
   // Local Timer countdown for smooth display
   useEffect(() => {
@@ -230,10 +243,11 @@ export default function Home() {
     });
   };
 
-  // Submit Vote through secure API to check IP Address
+  // Submit Vote through secure API to check device ID
   const handleVote = async (teamId: string) => {
     if (!votingStarted || timeLeft === 0) return;
     if (hasVoted) return;
+    if (!voterId) return;
 
     // Optimistic Update (Immediate visual response & confetti)
     setHasVoted(teamId);
@@ -243,7 +257,7 @@ export default function Home() {
       const res = await fetch("/api/voting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teamId })
+        body: JSON.stringify({ teamId, voterId })
       });
 
       const data = await res.json();

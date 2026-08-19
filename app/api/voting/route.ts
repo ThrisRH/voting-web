@@ -23,6 +23,7 @@ interface SessionState {
   title: string;
   votes: Record<string, number>;
   votedIps: Record<string, string>; // IP -> teamId mapping
+  votedDevices?: Record<string, string>; // voterId -> teamId mapping
 }
 
 // Helper to get client IP address
@@ -74,7 +75,8 @@ async function initializeFirestoreStore() {
     duration: configDuration,
     title: configTitle,
     votes: initialVotes,
-    votedIps: {}
+    votedIps: {},
+    votedDevices: {}
   };
 
   const sessionDocRef = doc(db, "sessions", "voting_session");
@@ -91,6 +93,9 @@ async function getSessionDoc(): Promise<SessionState> {
     const data = docSnap.data() as SessionState;
     if (!data.votedIps) {
       data.votedIps = {};
+    }
+    if (!data.votedDevices) {
+      data.votedDevices = {};
     }
     
     // Auto-update config if teams.json changed
@@ -123,10 +128,12 @@ async function getSessionDoc(): Promise<SessionState> {
   }
 }
 
-// GET handler: returns current status and if client IP has voted
+// GET handler: returns current status and if client device has voted
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req);
   const store = await getSessionDoc();
+  const url = new URL(req.url);
+  const voterId = url.searchParams.get("voterId") || "";
 
   // Read team names from CONFIG_FILE_PATH
   let teamNames: string[] = ["Nhóm 1", "Nhóm 2", "Nhóm 3", "Nhóm 4"];
@@ -149,8 +156,10 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const sanitizedIp = ip.replace(/\./g, "_").replace(/\//g, "_");
-  const hasVotedFor = store.votedIps && store.votedIps[sanitizedIp] ? store.votedIps[sanitizedIp] : null;
+  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  const hasVotedFor = store.votedDevices && sanitizedVoterId && store.votedDevices[sanitizedVoterId]
+    ? store.votedDevices[sanitizedVoterId]
+    : null;
 
   return NextResponse.json({
     title: store.title,
@@ -166,17 +175,17 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST handler: casts a vote for a team based on client IP
+// POST handler: casts a vote for a team based on unique voterId
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
   const body = await req.json();
-  const { teamId } = body;
+  const { teamId, voterId } = body;
 
   if (!teamId) {
     return NextResponse.json({ error: "Missing teamId" }, { status: 400 });
   }
 
-  const sanitizedIp = ip.replace(/\./g, "_").replace(/\//g, "_");
+  const deviceKey = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : ip.replace(/\./g, "_").replace(/\//g, "_");
   const sessionDocRef = doc(db, "sessions", "voting_session");
 
   try {
@@ -187,10 +196,10 @@ export async function POST(req: NextRequest) {
       }
 
       const session = sessionSnap.data() as SessionState;
-      const votedIps = session.votedIps || {};
+      const votedDevices = session.votedDevices || {};
 
-      // 1. Check if IP has already voted
-      if (votedIps[sanitizedIp]) {
+      // 1. Check if device has already voted
+      if (votedDevices[deviceKey]) {
         return { 
           error: "Your device has already cast a vote!" 
         };
@@ -211,16 +220,21 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 2. Update vote count and register IP lock
+      // 2. Update vote count and register device lock
       const updatedVotes = { ...session.votes };
       updatedVotes[teamId] = (updatedVotes[teamId] || 0) + 1;
       
-      const updatedVotedIps = { ...votedIps };
+      const updatedVotedDevices = { ...votedDevices };
+      updatedVotedDevices[deviceKey] = teamId;
+
+      const sanitizedIp = ip.replace(/\./g, "_").replace(/\//g, "_");
+      const updatedVotedIps = { ...(session.votedIps || {}) };
       updatedVotedIps[sanitizedIp] = teamId;
 
       // 3. Perform database updates
       transaction.update(sessionDocRef, { 
         votes: updatedVotes,
+        votedDevices: updatedVotedDevices,
         votedIps: updatedVotedIps
       });
 
@@ -259,7 +273,7 @@ export async function PUT(req: NextRequest) {
     const finalDuration = durationSeconds || store.duration;
     const targetEndTime = Date.now() + finalDuration * 1000;
     
-    // Reset votes and IP locks when starting/reactivating a session
+    // Reset votes and device/IP locks when starting/reactivating a session
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
@@ -271,11 +285,12 @@ export async function PUT(req: NextRequest) {
       endTime: targetEndTime,
       pausedTimeLeft: finalDuration,
       votes: resetVotes,
-      votedIps: {}
+      votedIps: {},
+      votedDevices: {}
     });
   } 
   else if (action === "RESET_ALL") {
-    // Reset voting session variables and clear votedIps map
+    // Reset voting session variables and clear votedDevices/votedIps map
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
@@ -287,11 +302,12 @@ export async function PUT(req: NextRequest) {
       endTime: null,
       pausedTimeLeft: store.duration,
       votes: resetVotes,
-      votedIps: {}
+      votedIps: {},
+      votedDevices: {}
     });
   }
   else if (action === "RESET_VOTES") {
-    // Reset votes only and clear votedIps map
+    // Reset votes only and clear votedDevices/votedIps map
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
@@ -299,7 +315,8 @@ export async function PUT(req: NextRequest) {
 
     await updateDoc(sessionDocRef, {
       votes: resetVotes,
-      votedIps: {}
+      votedIps: {},
+      votedDevices: {}
     });
   }
   else if (action === "TOGGLE_TIMER") {
@@ -345,3 +362,4 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ success: true });
 }
+
