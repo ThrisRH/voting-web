@@ -22,8 +22,16 @@ interface SessionState {
   duration: number;
   title: string;
   votes: Record<string, number>;
-  votedIps: Record<string, string>; // IP -> teamId mapping
-  votedDevices?: Record<string, string>; // voterId -> teamId mapping
+  votedIps: Record<string, string | string[]>; // IP -> teamId or array of teamIds
+  votedDevices?: Record<string, string | string[]>; // voterId -> teamId or array of teamIds
+}
+
+// Helper to normalize votes to array of strings
+function getVotedList(val: any): string[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === "string") return [val];
+  return [];
 }
 
 // Helper to get client IP address
@@ -159,9 +167,9 @@ export async function GET(req: NextRequest) {
   const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
   const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
   
-  const votedByDevice = store.votedDevices && sanitizedVoterId ? store.votedDevices[sanitizedVoterId] : null;
-  const votedByIp = store.votedIps && sanitizedIp ? store.votedIps[sanitizedIp] : null;
-  const hasVotedFor = votedByDevice || votedByIp || null;
+  const deviceVotes = store.votedDevices && sanitizedVoterId ? getVotedList(store.votedDevices[sanitizedVoterId]) : [];
+  const ipVotes = store.votedIps && sanitizedIp ? getVotedList(store.votedIps[sanitizedIp]) : [];
+  const votedTeamIds = Array.from(new Set([...deviceVotes, ...ipVotes]));
 
   return NextResponse.json({
     title: store.title,
@@ -172,8 +180,9 @@ export async function GET(req: NextRequest) {
     pausedTimeLeft: store.pausedTimeLeft,
     teams: teamsList,
     clientIp: ip,
-    hasVoted: !!hasVotedFor,
-    votedTeamId: hasVotedFor
+    hasVoted: votedTeamIds.length >= 2,
+    votedTeamIds: votedTeamIds,
+    votedTeamId: votedTeamIds.length > 0 ? votedTeamIds[0] : null
   });
 }
 
@@ -202,10 +211,21 @@ export async function POST(req: NextRequest) {
       const votedDevices = session.votedDevices || {};
       const votedIps = session.votedIps || {};
 
-      // 1. Check if device or IP address has already voted
-      if ((deviceKey && votedDevices[deviceKey]) || (sanitizedIp && votedIps[sanitizedIp])) {
+      const existingDeviceVotes = getVotedList(votedDevices[deviceKey]);
+      const existingIpVotes = getVotedList(votedIps[sanitizedIp]);
+      const combinedVotes = Array.from(new Set([...existingDeviceVotes, ...existingIpVotes]));
+
+      // 1. Check if user already voted for this specific team
+      if (combinedVotes.includes(teamId)) {
         return { 
-          error: "Your device or IP address has already cast a vote!" 
+          error: "Bạn đã bình chọn cho đội này rồi!" 
+        };
+      }
+
+      // 2. Check if user reached maximum limit of 2 votes
+      if (combinedVotes.length >= 2) {
+        return { 
+          error: "Bạn đã sử dụng tối đa 2 lượt bình chọn!" 
         };
       }
 
@@ -224,28 +244,31 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 2. Update vote count and register device & IP lock
+      // 3. Update vote count and register device & IP lock
       const updatedVotes = { ...session.votes };
       updatedVotes[teamId] = (updatedVotes[teamId] || 0) + 1;
       
+      const newDeviceList = Array.from(new Set([...existingDeviceVotes, teamId]));
+      const newIpList = Array.from(new Set([...existingIpVotes, teamId]));
+
       const updatedVotedDevices = { ...votedDevices };
       if (deviceKey) {
-        updatedVotedDevices[deviceKey] = teamId;
+        updatedVotedDevices[deviceKey] = newDeviceList;
       }
 
       const updatedVotedIps = { ...votedIps };
       if (sanitizedIp) {
-        updatedVotedIps[sanitizedIp] = teamId;
+        updatedVotedIps[sanitizedIp] = newIpList;
       }
 
-      // 3. Perform database updates
+      // 4. Perform database updates
       transaction.update(sessionDocRef, { 
         votes: updatedVotes,
         votedDevices: updatedVotedDevices,
         votedIps: updatedVotedIps
       });
 
-      return { success: true };
+      return { success: true, votedTeamIds: Array.from(new Set([...combinedVotes, teamId])) };
     });
 
     if (result.error) {
@@ -254,7 +277,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ 
       success: true, 
-      votedTeamId: teamId,
+      votedTeamIds: result.votedTeamIds,
       clientIp: ip
     });
 

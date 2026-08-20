@@ -50,7 +50,7 @@ export default function Home() {
   const [passwordError, setPasswordError] = useState<boolean>(false);
 
   // UI States
-  const [hasVoted, setHasVoted] = useState<string | null>(null);
+  const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -77,10 +77,12 @@ export default function Home() {
         if (statusRes.ok) {
           const data = await statusRes.json();
           setClientIp(data.clientIp || "127.0.0.1");
-          if (data.hasVoted && data.votedTeamId) {
-            setHasVoted(data.votedTeamId);
+          if (Array.isArray(data.votedTeamIds)) {
+            setVotedTeamIds(data.votedTeamIds);
+          } else if (data.votedTeamId) {
+            setVotedTeamIds([data.votedTeamId]);
           } else {
-            setHasVoted(null);
+            setVotedTeamIds([]);
           }
         }
 
@@ -138,14 +140,24 @@ export default function Home() {
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
-          // Update hasVoted based on our voterId or clientIp inside votedDevices / votedIps map
+          // Update votedTeamIds based on our voterId or clientIp inside votedDevices / votedIps map
           const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
           const sanitizedIp = clientIp ? clientIp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
           const votedDevicesMap = data.votedDevices || {};
           const votedIpsMap = data.votedIps || {};
 
-          const votedFor = (sanitizedVoterId && votedDevicesMap[sanitizedVoterId]) || (sanitizedIp && votedIpsMap[sanitizedIp]) || null;
-          setHasVoted(votedFor);
+          const getVotedList = (val: any): string[] => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            if (typeof val === "string") return [val];
+            return [];
+          };
+
+          const deviceVotes = sanitizedVoterId ? getVotedList(votedDevicesMap[sanitizedVoterId]) : [];
+          const ipVotes = sanitizedIp ? getVotedList(votedIpsMap[sanitizedIp]) : [];
+          const currentVotedIds = Array.from(new Set([...deviceVotes, ...ipVotes]));
+
+          setVotedTeamIds(currentVotedIds);
         }
       },
       (error) => {
@@ -247,14 +259,15 @@ export default function Home() {
     });
   };
 
-  // Submit Vote through secure API to check device ID
+  // Submit Vote through secure API to check device ID & IP limits
   const handleVote = async (teamId: string) => {
     if (isHost || !votingStarted || timeLeft === 0) return;
-    if (hasVoted) return;
+    if (votedTeamIds.includes(teamId) || votedTeamIds.length >= 2) return;
     if (!voterId) return;
 
     // Optimistic Update (Immediate visual response & confetti)
-    setHasVoted(teamId);
+    const previousVotedIds = [...votedTeamIds];
+    setVotedTeamIds(prev => [...prev, teamId]);
     triggerVoteConfetti();
 
     try {
@@ -268,15 +281,17 @@ export default function Home() {
       
       if (!res.ok) {
         // Revert optimistic update on failure
-        setHasVoted(null);
-        setErrorMessage(data.error || "Something went wrong!");
+        setVotedTeamIds(previousVotedIds);
+        setErrorMessage(data.error || "Có lỗi xảy ra!");
         setTimeout(() => setErrorMessage(null), 5000);
+      } else if (data.votedTeamIds) {
+        setVotedTeamIds(data.votedTeamIds);
       }
     } catch (err) {
       console.error(err);
       // Revert optimistic update on error
-      setHasVoted(null);
-      setErrorMessage("Unable to connect to server!");
+      setVotedTeamIds(previousVotedIds);
+      setErrorMessage("Không thể kết nối đến máy chủ!");
       setTimeout(() => setErrorMessage(null), 5000);
     }
   };
@@ -500,7 +515,9 @@ export default function Home() {
                   {teams.map((team, index) => {
                     const percent = getPercentage(team.votes);
                     const isLeading = timeLeft === 0 && getWinner()?.id === team.id && totalVotes > 0;
-                    const isUserSelection = hasVoted === team.id;
+                    const isUserSelection = votedTeamIds.includes(team.id);
+                    const isMaxVotesReached = votedTeamIds.length >= 2;
+                    const isButtonDisabled = isHost || timeLeft === 0 || isUserSelection || isMaxVotesReached;
                     
                     return (
                       <div 
@@ -542,17 +559,25 @@ export default function Home() {
                         {/* Right: Checkmark Button */}
                         <button
                           onClick={() => handleVote(team.id)}
-                          disabled={isHost || timeLeft === 0 || !!hasVoted}
+                          disabled={isButtonDisabled}
                           className={`w-7 h-7 sm:w-8 sm:h-8 rounded-[4px] border flex items-center justify-center transition-all duration-200 shrink-0 ${
                             isHost || timeLeft === 0
                               ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
-                              : hasVoted
-                                ? isUserSelection
-                                  ? "bg-[#369d5c] border-[#369d5c] text-white cursor-default shadow-sm"
-                                  : "bg-slate-50 border-slate-100 text-slate-300 cursor-default"
-                                : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95 cursor-pointer"
+                              : isUserSelection
+                                ? "bg-[#369d5c] border-[#369d5c] text-white cursor-default shadow-sm"
+                                : isMaxVotesReached
+                                  ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
+                                  : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95 cursor-pointer"
                           }`}
-                          title={isHost ? "Host cannot vote" : isUserSelection ? "Voted" : "Vote for this team"}
+                          title={
+                            isHost 
+                              ? "Host không thể bình chọn" 
+                              : isUserSelection 
+                                ? "Đã bình chọn cho đội này" 
+                                : isMaxVotesReached 
+                                  ? "Đã dùng hết 2 lượt bình chọn" 
+                                  : "Bình chọn cho đội này"
+                          }
                         >
                           <Check className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
                         </button>
@@ -564,8 +589,8 @@ export default function Home() {
 
                 {/* Voter Information note */}
                 <div className="text-center text-[10px] text-slate-400 mt-2 font-medium shrink-0 flex flex-col gap-[6px]">
-                  <p>{isHost ? "Host view mode (voting disabled for host)." : "Each participant may cast only one vote."}</p>
-                  <p className="text-slate-300 text-[8px]">Secured and synchronized automatically • Device verified</p>
+                  <p>{isHost ? "Giao diện Host (Host không thể bình chọn)." : "Mỗi người được vote tối đa 2 lần (không vote trùng đội)."}</p>
+                  <p className="text-slate-300 text-[8px]">Bảo mật và đồng bộ tự động • Xác thực theo IP & Thiết bị</p>
                 </div>
 
               </div>
