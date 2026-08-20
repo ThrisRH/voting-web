@@ -120,37 +120,34 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confettiFired, setConfettiFired] = useState<boolean>(false);
 
-  // Initialize voterId on client mount
+  // Consolidated fail-safe client initialization (runs once on mount)
   useEffect(() => {
-    try {
-      let id = safeGetLocalStorage("voting_voter_id");
-      if (!id) {
-        if (!memoryVoterId) {
-          memoryVoterId = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
-        }
-        id = memoryVoterId;
-        safeSetLocalStorage("voting_voter_id", id);
-      }
-      setVoterId(id);
-    } catch (e) {
-      setVoterId("voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9));
-    }
-  }, []);
-
-  // Fetch initial config and check voter status once voterId is initialized
-  useEffect(() => {
-    if (!voterId) return;
-
     let isSubscribed = true;
 
     async function initializeClient() {
       try {
+        // 1. Get or create voterId safely
+        let id = safeGetLocalStorage("voting_voter_id");
+        if (!id) {
+          if (!memoryVoterId) {
+            memoryVoterId = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+          }
+          id = memoryVoterId;
+          safeSetLocalStorage("voting_voter_id", id);
+        }
+        if (isSubscribed) setVoterId(id);
+
         const fp = getDeviceFingerprint();
-        // 1. Fetch IP & voted status from API with cache: no-store
+
+        // 2. Fetch IP & voted status from API with 3.5s timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+
         const statusRes = await fetch(
-          `/api/voting?voterId=${encodeURIComponent(voterId)}&fingerprint=${encodeURIComponent(fp)}`,
-          { cache: "no-store" }
+          `/api/voting?voterId=${encodeURIComponent(id)}&fingerprint=${encodeURIComponent(fp)}`,
+          { cache: "no-store", signal: controller.signal }
         ).catch(() => null);
+        clearTimeout(timeoutId);
 
         if (statusRes && statusRes.ok) {
           const data = await statusRes.json().catch(() => ({}));
@@ -166,16 +163,14 @@ export default function Home() {
           }
         }
 
-        // 2. Fetch team config names with cache: no-store
+        // 3. Fetch team config names
         const configRes = await fetch("/teams.json", { cache: "no-store" }).catch(() => null);
         let defaultTeams = ["Team 1", "Team 2", "Team 3", "Team 4"];
         if (configRes && configRes.ok) {
           const config = await configRes.json().catch(() => null);
-          if (config) {
+          if (config && Array.isArray(config.teams) && config.teams.length > 0) {
+            defaultTeams = config.teams;
             setDuration(config.votingDurationSeconds || 300);
-            if (Array.isArray(config.teams) && config.teams.length > 0) {
-              defaultTeams = config.teams;
-            }
           }
         }
         if (isSubscribed) {
@@ -202,7 +197,7 @@ export default function Home() {
     return () => {
       isSubscribed = false;
     };
-  }, [voterId]);
+  }, []);
 
   // Listen to Firestore changes in real-time
   useEffect(() => {
@@ -264,7 +259,20 @@ export default function Home() {
           const compositeVotes = voterKey ? getVotedList(votedDevicesMap[voterKey]) : [];
           const deviceVotes = sanitizedVoterId ? getVotedList(votedDevicesMap[sanitizedVoterId]) : [];
           const fpVotes = sanitizedFp ? getVotedList(votedDevicesMap[`fp_${sanitizedFp}`]) : [];
-          const currentVotedIds = Array.from(new Set([...compositeVotes, ...deviceVotes, ...fpVotes]));
+
+          // Wildcard match any keys containing the device fingerprint
+          let wildcardFpVotes: string[] = [];
+          if (sanitizedFp) {
+            Object.keys(votedDevicesMap).forEach((k) => {
+              if (k.includes(`_fp_${sanitizedFp}`) || k === `fp_${sanitizedFp}`) {
+                wildcardFpVotes.push(...getVotedList(votedDevicesMap[k]));
+              }
+            });
+          }
+
+          const currentVotedIds = Array.from(
+            new Set([...compositeVotes, ...deviceVotes, ...fpVotes, ...wildcardFpVotes])
+          );
 
           if (!pendingTeamIdRef.current) {
             setVotedTeamIds(currentVotedIds);
