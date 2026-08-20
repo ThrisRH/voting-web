@@ -155,7 +155,6 @@ async function getSessionDoc(): Promise<SessionState> {
 
 const deviceDetector = new DeviceDetector();
 
-<<<<<<< HEAD
 // Helper to get voter key using Zalo ID (guarantees absolute unique voting records)
 function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): string {
   const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
@@ -166,47 +165,6 @@ function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): s
     return `ip_${sanitizedIp}`;
   }
   return `zalo_${sanitizedVoterId}`;
-=======
-// Helper to get composite voter key (IP + User-Agent parsed device + fingerprint / voterId)
-function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): string {
-  const ip = getClientIp(req);
-  const userAgent = req.headers.get("user-agent") || "";
-  
-  let deviceSignature = "";
-  try {
-    if (userAgent) {
-      const parsed = deviceDetector.parse(userAgent);
-      const osName = parsed.os?.name || "";
-      const osVer = parsed.os?.version || "";
-      const deviceType = parsed.device?.type || "";
-      const deviceBrand = parsed.device?.brand || "";
-      const deviceModel = parsed.device?.model || "";
-      const clientName = parsed.client?.name || "";
-      
-      const sig = `${osName}_${osVer}_${deviceType}_${deviceBrand}_${deviceModel}_${clientName}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-      if (sig && sig !== "_____") {
-        deviceSignature = sig;
-      }
-    }
-  } catch (e) {
-    console.error("DeviceDetector error:", e);
-  }
-
-  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "127_0_0_1";
-  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-  const sanitizedFp = fingerprint ? fingerprint.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-
-  if (deviceSignature && sanitizedIp) {
-    return `ip_${sanitizedIp}_dev_${deviceSignature}_fp_${sanitizedFp || sanitizedVoterId}`;
-  }
-  if (sanitizedFp && sanitizedIp) {
-    return `ip_${sanitizedIp}_fp_${sanitizedFp}`;
-  }
-  if (sanitizedVoterId) {
-    return `vid_${sanitizedVoterId}`;
-  }
-  return `ip_${sanitizedIp}`;
->>>>>>> parent of bacd951 (update code)
 }
 
 // GET handler: returns current status and if client device has voted
