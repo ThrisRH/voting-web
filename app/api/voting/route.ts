@@ -239,7 +239,8 @@ export async function GET(req: NextRequest) {
     clientIp: ip,
     hasVoted: votedTeamIds.length >= 2,
     votedTeamIds: votedTeamIds,
-    votedTeamId: votedTeamIds.length > 0 ? votedTeamIds[0] : null
+    votedTeamId: votedTeamIds.length > 0 ? votedTeamIds[0] : null,
+    voterKey: voterKey
   });
 }
 

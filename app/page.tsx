@@ -115,6 +115,7 @@ export default function Home() {
 
   // UI States
   const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
+  const [serverVoterKey, setServerVoterKey] = useState<string>("");
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -153,6 +154,10 @@ export default function Home() {
           const data = await statusRes.json().catch(() => ({}));
           if (isSubscribed) {
             setClientIp(data.clientIp || "127.0.0.1");
+            // Capture voterKey from backend dynamically to ensure 100% match
+            if (data.voterKey) {
+              setServerVoterKey(data.voterKey);
+            }
             if (Array.isArray(data.votedTeamIds)) {
               setVotedTeamIds(data.votedTeamIds);
             } else if (data.votedTeamId) {
@@ -240,13 +245,6 @@ export default function Home() {
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
-          // Update votedTeamIds based on composite key (IP + fingerprint), voterId, and fp
-          const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-          const sanitizedIp = clientIp ? clientIp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-          const fp = getDeviceFingerprint();
-          const sanitizedFp = fp ? fp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-          
-          const voterKey = `ip_${sanitizedIp}_fp_${sanitizedFp}`;
           const votedDevicesMap = data.votedDevices || {};
 
           const getVotedList = (val: any): string[] => {
@@ -256,23 +254,8 @@ export default function Home() {
             return [];
           };
 
-          const compositeVotes = voterKey ? getVotedList(votedDevicesMap[voterKey]) : [];
-          const deviceVotes = sanitizedVoterId ? getVotedList(votedDevicesMap[sanitizedVoterId]) : [];
-          const fpVotes = sanitizedFp ? getVotedList(votedDevicesMap[`fp_${sanitizedFp}`]) : [];
-
-          // Wildcard match any keys containing the device fingerprint
-          let wildcardFpVotes: string[] = [];
-          if (sanitizedFp) {
-            Object.keys(votedDevicesMap).forEach((k) => {
-              if (k.includes(`_fp_${sanitizedFp}`) || k === `fp_${sanitizedFp}`) {
-                wildcardFpVotes.push(...getVotedList(votedDevicesMap[k]));
-              }
-            });
-          }
-
-          const currentVotedIds = Array.from(
-            new Set([...compositeVotes, ...deviceVotes, ...fpVotes, ...wildcardFpVotes])
-          );
+          // Use the absolute source of truth voterKey returned from the backend
+          const currentVotedIds = serverVoterKey ? getVotedList(votedDevicesMap[serverVoterKey]) : [];
 
           if (!pendingTeamIdRef.current) {
             setVotedTeamIds(currentVotedIds);
@@ -285,7 +268,7 @@ export default function Home() {
     );
 
     return unsubscribe;
-  }, [loading, teamNamesConfig, duration, voterId, clientIp]);
+  }, [loading, teamNamesConfig, duration, voterId, clientIp, serverVoterKey]);
 
   // Local Timer countdown for smooth display
   useEffect(() => {
