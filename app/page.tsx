@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  Trophy,
-  Timer,
-  Check,
-  Play,
-  Pause,
-  Settings,
+import { 
+  Trophy, 
+  Timer, 
+  Check, 
+  RefreshCw, 
+  Play, 
+  Pause, 
+  Settings, 
   X,
   Award,
   Lock,
@@ -26,15 +27,9 @@ interface Team {
   votes: number;
 }
 
-interface ZaloUser {
-  id: string;
-  name: string;
-  avatar: string;
-}
-
 const ADMIN_PASSWORD = "123456";
 
-// Safe localStorage access wrappers
+// Safe localStorage access wrappers that never throw in private/incognito modes
 function safeGetLocalStorage(key: string): string | null {
   try {
     if (typeof window === "undefined" || !window.localStorage) return null;
@@ -49,7 +44,7 @@ function safeSetLocalStorage(key: string, val: string): void {
     if (typeof window === "undefined" || !window.localStorage) return;
     localStorage.setItem(key, val);
   } catch (e) {
-    // Ignore storage restrictions
+    // Ignore storage restrictions in incognito mode
   }
 }
 
@@ -62,24 +57,50 @@ function safeRemoveLocalStorage(key: string): void {
   }
 }
 
-// Read Zalo User from document cookies
-function getZaloUserFromCookie(): ZaloUser | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;)\s*zalo_user\s*=\s*([^;]+)/);
-  if (match) {
-    try {
-      return JSON.parse(decodeURIComponent(match[2])) as ZaloUser;
-    } catch (e) {
-      return null;
-    }
-  }
-  return null;
-}
+let memoryVoterId = "";
 
-// Clear cookie session
-function deleteZaloCookie() {
-  if (typeof document === "undefined") return;
-  document.cookie = "zalo_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+// Helper to get hardware-based device fingerprint (excluding User-Agent to group webviews together)
+function getDeviceFingerprint(): string {
+  try {
+    if (typeof window === "undefined") return "";
+    const nav = window.navigator || ({} as Navigator);
+    const screen = window.screen || ({} as Screen);
+    
+    // Draw canvas texture to identify hardware GPU renderer differences
+    let gpu = "";
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = (canvas.getContext("webgl") || canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+      if (gl) {
+        const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+        if (debugInfo) {
+          gpu = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "";
+        }
+      }
+    } catch (e) {}
+
+    const components = [
+      nav.language || "",
+      screen.colorDepth || 0,
+      screen.width ? screen.width + "x" + screen.height : "",
+      screen.availWidth ? screen.availWidth + "x" + screen.availHeight : "",
+      new Date().getTimezoneOffset(),
+      nav.hardwareConcurrency || 0,
+      (nav as any).deviceMemory || 0,
+      gpu
+    ];
+    
+    let hash = 0;
+    const str = components.join("||");
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return "hw_" + Math.abs(hash).toString(36);
+  } catch (e) {
+    return "hw_fallback_" + Math.random().toString(36).substring(2, 8);
+  }
 }
 
 export default function Home() {
@@ -90,10 +111,9 @@ export default function Home() {
   const [totalVotes, setTotalVotes] = useState<number>(0);
   const [clientIp, setClientIp] = useState<string>("");
   const [voterId, setVoterId] = useState<string>("");
-  const [zaloUser, setZaloUser] = useState<ZaloUser | null>(null);
   const [pendingTeamId, setPendingTeamId] = useState<string | null>(null);
   const pendingTeamIdRef = useRef<string | null>(null);
-
+  
   // Timer States
   const [timeLeft, setTimeLeft] = useState<number>(300);
   const [timerRunning, setTimerRunning] = useState<boolean>(false);
@@ -109,70 +129,45 @@ export default function Home() {
   // UI States
   const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
   const [serverVoterKey, setServerVoterKey] = useState<string>("");
-  
-  // PKCE Helper functions for Zalo OAuth 2.0
-  const generateRandomString = (length: number) => {
-    const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-    let result = "";
-    for (let i = 0; i < length; i++) {
-      result += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    return result;
-  };
-
-  const sha256 = async (plain: string) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plain);
-    const hash = await window.crypto.subtle.digest("SHA-256", data);
-    return hash;
-  };
-
-  const base64urlencode = (a: ArrayBuffer) => {
-    const bytes = new Uint8Array(a);
-    let str = "";
-    for (let i = 0; i < bytes.byteLength; i++) {
-      str += String.fromCharCode(bytes[i]);
-    }
-    return btoa(str)
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=/g, "");
-  };
-
-  const generateCodeChallenge = async (verifier: string) => {
-    const hashed = await sha256(verifier);
-    return base64urlencode(hashed);
-  };
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confettiFired, setConfettiFired] = useState<boolean>(false);
 
-  // Consolidated client initialization
+  // Consolidated fail-safe client initialization (runs once on mount)
   useEffect(() => {
     let isSubscribed = true;
 
     async function initializeClient() {
       try {
-        // Read Zalo User Session
-        const user = getZaloUserFromCookie();
-        if (isSubscribed) {
-          setZaloUser(user);
-          if (user) {
-            setVoterId(user.id);
+        // 1. Get or create voterId safely
+        let id = safeGetLocalStorage("voting_voter_id");
+        if (!id) {
+          if (!memoryVoterId) {
+            memoryVoterId = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
           }
+          id = memoryVoterId;
+          safeSetLocalStorage("voting_voter_id", id);
         }
+        if (isSubscribed) setVoterId(id);
 
-        // Fetch IP & initial voted status
+        const fp = getDeviceFingerprint();
+
+        // 2. Fetch IP & voted status from API with 3.5s timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+
         const statusRes = await fetch(
-          `/api/voting?voterId=${encodeURIComponent(user?.id || "")}`,
-          { cache: "no-store" }
+          `/api/voting?voterId=${encodeURIComponent(id)}&fingerprint=${encodeURIComponent(fp)}`,
+          { cache: "no-store", signal: controller.signal }
         ).catch(() => null);
+        clearTimeout(timeoutId);
 
         if (statusRes && statusRes.ok) {
           const data = await statusRes.json().catch(() => ({}));
           if (isSubscribed) {
             setClientIp(data.clientIp || "127.0.0.1");
+            // Capture voterKey from backend dynamically to ensure 100% match
             if (data.voterKey) {
               setServerVoterKey(data.voterKey);
             }
@@ -186,7 +181,7 @@ export default function Home() {
           }
         }
 
-        // Fetch team config names
+        // 3. Fetch team config names
         const configRes = await fetch("/teams.json", { cache: "no-store" }).catch(() => null);
         let defaultTeams = ["Team 1", "Team 2", "Team 3", "Team 4"];
         if (configRes && configRes.ok) {
@@ -224,12 +219,13 @@ export default function Home() {
 
   // Listen to Firestore changes in real-time
   useEffect(() => {
-    if (loading) return;
+    if (loading || !voterId) return;
 
     const docRef = doc(db, "sessions", "voting_session");
-
+    
+    // Subscribe to real-time changes
     const unsubscribe = onSnapshot(
-      docRef,
+      docRef, 
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
@@ -237,7 +233,8 @@ export default function Home() {
           setTimerRunning(data.timerRunning || false);
           setEndTime(data.endTime || null);
           setPausedTimeLeft(data.pausedTimeLeft !== undefined ? data.pausedTimeLeft : duration);
-
+          
+          // Check if session was reset: auto log out Host if reset occurred after/at Host login
           const resetTimestamp = data.resetTimestamp || 0;
           const hostLoginTime = parseInt(safeGetLocalStorage("voting_host_login_time") || "0", 10);
           if (resetTimestamp > 0 && (hostLoginTime === 0 || resetTimestamp >= hostLoginTime)) {
@@ -245,7 +242,6 @@ export default function Home() {
             safeRemoveLocalStorage("voting_app_is_host");
             safeRemoveLocalStorage("voting_host_login_time");
           }
-
           const votesMap = data.votes || {};
           const currentConfig = teamNamesConfig.length > 0 ? teamNamesConfig : ["Team 1", "Team 2", "Team 3", "Team 4"];
           const updatedTeams = currentConfig.map((name, idx) => {
@@ -256,9 +252,9 @@ export default function Home() {
               votes: votesMap[id] || 0
             };
           });
-
+          
           setTeams(updatedTeams);
-
+          
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
@@ -271,7 +267,9 @@ export default function Home() {
             return [];
           };
 
+          // Use the absolute source of truth voterKey returned from the backend
           const currentVotedIds = serverVoterKey ? getVotedList(votedDevicesMap[serverVoterKey]) : [];
+
           if (!pendingTeamIdRef.current) {
             setVotedTeamIds(currentVotedIds);
           }
@@ -292,9 +290,9 @@ export default function Home() {
     const interval = setInterval(() => {
       const now = Date.now();
       const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
-
+      
       setTimeLeft(remaining);
-
+      
       if (remaining === 0) {
         setTimeLeft(0);
         setTimerRunning(false);
@@ -351,7 +349,7 @@ export default function Home() {
 
       const particleCount = 50 * (remainingTime / animationDuration);
       const colors = ["#369d5c", "#5bc183", "#23723f", "#a7f3d0", "#ffffff"];
-
+      
       confetti({
         ...defaults,
         particleCount,
@@ -404,14 +402,15 @@ export default function Home() {
     setVotedTeamIds(nextVotedIds);
 
     try {
+      const fp = getDeviceFingerprint();
       const res = await fetch("/api/voting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teamId, voterId })
+        body: JSON.stringify({ teamId, voterId, fingerprint: fp })
       });
 
       const data = await res.json();
-
+      
       if (!res.ok) {
         // Revert optimistic update on failure
         setVotedTeamIds(previousVotedIds);
@@ -478,16 +477,16 @@ export default function Home() {
     }
   };
 
-  // Victory Banner
+  // Victory Banner: reveals winning team to Host ONLY after timer ends
   const renderVictoryText = () => {
     if (!isHost) {
       return "Victory: (could be your team)";
     }
-
+    
     if (!votingStarted || timeLeft > 0) {
       return "Victory: (could be your team)";
     }
-
+    
     if (totalVotes === 0) {
       return "No votes cast";
     }
@@ -495,6 +494,7 @@ export default function Home() {
     const winner = getWinner();
     if (!winner) return "No votes cast";
 
+    // Check for tie: find all teams with the same max vote count
     const maxVotes = winner.votes;
     const tiedTeams = teams.filter(t => t.votes === maxVotes && maxVotes > 0);
 
@@ -506,48 +506,9 @@ export default function Home() {
     return `Victory: ${winner.name}`;
   };
 
-  const handleZaloLogin = async () => {
-    try {
-      // Fetch configurations from backend API to bypass NEXT_PUBLIC_ restriction
-      const res = await fetch("/api/config");
-      const config = await res.json();
-      
-      const appId = config.appId;
-      const state = Math.random().toString(36).substring(7);
-
-      if (!appId) {
-        alert("Chưa cấu hình Zalo APP_ID! Vui lòng kiểm tra lại cấu hình Biến môi trường trên Vercel.");
-        return;
-      }
-
-      // Dynamically derive callback URL based on current origin to prevent mismatch
-      const callbackUrl = `${window.location.origin}/api/auth/zalo/callback`;
-
-      // Generate PKCE code verifier and challenge
-      const codeVerifier = generateRandomString(43);
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-      // Save code verifier in a temporary cookie so backend callback can fetch it
-      document.cookie = `zalo_code_verifier=${encodeURIComponent(codeVerifier)}; Path=/; Max-Age=300; SameSite=Lax`;
-
-      // Redirect to Zalo authorization page with PKCE challenge parameter
-      const targetUrl = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${codeChallenge}&state=${state}`;
-      window.location.href = targetUrl;
-    } catch (e) {
-      console.error(e);
-      alert("Không thể kết nối đến máy chủ để lấy cấu hình đăng nhập Zalo!");
-    }
-  };
-
-  const handleSignOut = () => {
-    deleteZaloCookie();
-    setZaloUser(null);
-    setVoterId("");
-    window.location.reload();
-  };
-
   return (
     <div className="flex flex-col h-screen max-h-screen w-full bg-[#fcfefd] text-[#1e293b] font-sans antialiased overflow-hidden select-none relative">
+      {/* Top green accent bar */}
       <div className="h-1 w-full bg-[#369d5c] shrink-0" />
 
       {/* ERROR TOAST */}
@@ -560,14 +521,14 @@ export default function Home() {
 
       {/* Main viewport area */}
       <main className="flex-1 flex flex-col justify-center items-center p-2 sm:p-4 md:p-6 overflow-hidden w-full max-w-2xl mx-auto">
-
+        
         {/* Core Container Card */}
         <div className="w-full bg-white border border-[#e2e8f0] p-3 sm:p-5 md:p-8 shadow-sm rounded-[4px] flex flex-col overflow-hidden max-h-full">
-
-          {/* HEADER */}
+          
+          {/* HEADER (12px gap) */}
           <div className="flex flex-col items-center gap-[12px] w-full text-center shrink-0">
-
-            {/* Event Hero Banner */}
+            
+            {/* Event Hero Banner (Full Size - No Cropping) */}
             <div className="w-full relative rounded-[6px] overflow-hidden border border-slate-200/80 shadow-sm bg-slate-50 flex items-center justify-center shrink-0">
               <img
                 src="/banner.jpg"
@@ -590,6 +551,7 @@ export default function Home() {
 
             {/* Title & Status indicator */}
             <div className="flex flex-col items-center gap-[12px]">
+              {/* Timer Badge */}
               {votingStarted && (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-[4px]">
                   <Timer className={`w-3.5 h-3.5 ${timerRunning && timeLeft > 0 ? "text-[#369d5c] animate-spin-slow" : "text-slate-400"}`} />
@@ -603,70 +565,20 @@ export default function Home() {
 
           </div>
 
+          {/* SPACING: 20px - 32px gap between header and content card area */}
           <div className="mt-4 sm:mt-[32px] flex-1 flex flex-col gap-[12px] overflow-hidden">
-
+            
             {loading ? (
               <div className="flex-1 flex justify-center items-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#369d5c]"></div>
               </div>
-            ) : !zaloUser && !isHost ? (
-
-              /* CASE 0: USER NOT LOGGED IN YET (ZALO BLOCKER) */
-              <div className="flex-1 flex flex-col justify-center items-center text-center p-4 gap-6">
-                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center border border-blue-100">
-                  <Users className="w-8 h-8 text-blue-500" />
-                </div>
-
-                <div className="flex flex-col gap-2 max-w-sm">
-                  <h2 className="font-bold text-slate-800 text-lg">Đăng Nhập Zalo</h2>
-                  <p className="text-xs text-slate-500 leading-relaxed px-4">
-                    Vui lòng đăng nhập tài khoản Zalo của bạn để xác minh danh tính và bắt đầu tham gia bình chọn.
-                  </p>
-                </div>
-
-                <button
-                  onClick={handleZaloLogin}
-                  className="w-full max-w-xs py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-[4px] shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
-                >
-                  <img src="/vote.png" alt="Zalo Logo" className="w-5 h-5 object-contain invert brightness-200" onError={(e) => e.currentTarget.style.display = "none"} />
-                  Đăng Nhập Bằng Zalo
-                </button>
-
-                {/* Host access on lock screen */}
-                <form onSubmit={handleHostLogin} className="w-full max-w-xs mt-6 pt-4 border-t border-slate-100 flex flex-col gap-[6px]">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                    <span>Host access:</span>
-                    {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
-                  </div>
-                  <div className="flex items-center gap-[6px]">
-                    <div className="relative flex-1 flex items-center">
-                      <div className="absolute left-2.5 inset-y-0 flex items-center pointer-events-none text-slate-400">
-                        <Lock className="w-3.5 h-3.5 shrink-0" />
-                      </div>
-                      <input
-                        type="password"
-                        value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
-                        placeholder="Password..."
-                        className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
-                    >
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </form>
-              </div>
-
             ) : !votingStarted ? (
-
+              
               /* CASE 1: Voting NOT STARTED Yet */
               <div className="flex-1 flex flex-col justify-center items-center text-center p-2 sm:p-4 gap-[12px]">
-
+                
                 {isHost ? (
+                  /* Host waiting view */
                   <div className="flex flex-col items-center gap-[12px] max-w-sm">
                     <div className="w-12 h-12 bg-[#369d5c]/10 text-[#369d5c] rounded-[4px] flex items-center justify-center">
                       <Settings className="w-6 h-6 animate-pulse" />
@@ -683,21 +595,8 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
+                  /* Employee waiting view */
                   <div className="flex flex-col items-center gap-[12px] max-w-sm">
-                    {/* User Profile display */}
-                    {zaloUser && (
-                      <div className="flex items-center gap-2 mb-4 p-2 bg-slate-50 border border-slate-100 rounded-full pr-4">
-                        <img src={zaloUser.avatar} alt={zaloUser.name} className="w-8 h-8 rounded-full border border-slate-200" />
-                        <div className="flex flex-col text-left">
-                          <span className="text-[10px] text-slate-400 font-medium">Đã đăng nhập:</span>
-                          <span className="text-xs font-bold text-slate-700 leading-tight">{zaloUser.name}</span>
-                        </div>
-                        <button onClick={handleSignOut} className="ml-2 text-slate-400 hover:text-rose-500 cursor-pointer">
-                          <LogOut className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-
                     <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-[4px] border border-slate-100 flex items-center justify-center animate-bounce">
                       <Users className="w-6 h-6" />
                     </div>
@@ -710,140 +609,202 @@ export default function Home() {
                     </span>
                   </div>
                 )}
+                
+                {/* Host authentication login form inside waiting page */}
+                {!isHost && (
+                  <form onSubmit={handleHostLogin} className="w-full max-w-xs mt-6 pt-4 border-t border-slate-100 flex flex-col gap-[6px]">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                      <span>Host access:</span>
+                      {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
+                    </div>
+                    <div className="flex items-center gap-[6px]">
+                      <div className="relative flex-1 flex items-center">
+                        <div className="absolute left-2.5 inset-y-0 flex items-center pointer-events-none text-slate-400">
+                          <Lock className="w-3.5 h-3.5 shrink-0" />
+                        </div>
+                        <input
+                          type="password"
+                          value={passwordInput}
+                          onChange={(e) => setPasswordInput(e.target.value)}
+                          placeholder="Password..."
+                          className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </form>
+                )}
 
               </div>
 
             ) : (
-
+              
               /* CASE 2: Voting ACTIVE / STARTED */
               <div className="flex-1 flex flex-col gap-[12px] overflow-hidden">
-
-                {/* User Info & Signout in active mode */}
-                {!isHost && zaloUser && (
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-1 shrink-0">
-                    <div className="flex items-center gap-2">
-                      <img src={zaloUser.avatar} alt={zaloUser.name} className="w-7 h-7 rounded-full border border-slate-200" />
-                      <span className="text-xs text-slate-600">Xin chào, <strong className="text-slate-800">{zaloUser.name}</strong></span>
-                    </div>
-                    <button onClick={handleSignOut} className="text-xs text-slate-400 hover:text-rose-500 flex items-center gap-1 cursor-pointer">
-                      <LogOut className="w-3.5 h-3.5" /> Đăng xuất
-                    </button>
-                  </div>
-                )}
-
+                
+                {/* Total count details (Shown ONLY to Host to keep voter UI clean & vote-free) */}
                 {isHost && (
                   <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-1.5 text-slate-500 font-medium shrink-0">
                     <span className="flex items-center gap-1"><Settings className="w-3 h-3 text-[#369d5c]" /> Host View (Live Results):</span>
                     <span className="text-slate-800 font-bold bg-[#369d5c]/5 border border-[#369d5c]/15 px-2.5 py-0.5 rounded-[4px]">
-                      Total Votes: {totalVotes}
+                      {totalVotes.toLocaleString()} votes
                     </span>
                   </div>
                 )}
 
-                <div className="flex-1 overflow-y-auto pr-1">
-                  <div className="flex flex-col gap-[8px] py-1">
-                    {teams.map((team) => {
-                      const isVoted = votedTeamIds.includes(team.id);
-                      const isPending = pendingTeamId === team.id;
-                      const percentage = getPercentage(team.votes);
-                      const displayPercentage = percentage > 0 ? `${percentage}%` : "0%";
-
-                      const showResults = isHost || timeLeft === 0;
-
-                      return (
-                        <div key={team.id} className="relative w-full shrink-0">
-                          <button
-                            onClick={() => handleVote(team.id)}
-                            disabled={isHost || timeLeft === 0 || isPending}
-                            className={`w-full text-left p-3.5 border rounded-[4px] relative overflow-hidden transition-all flex items-center justify-between gap-4 leading-normal select-none
-                              ${isVoted
-                                ? "bg-[#369d5c]/5 border-[#369d5c] shadow-sm text-slate-900"
-                                : "bg-white border-[#e2e8f0] text-slate-700 hover:border-slate-300 hover:bg-slate-50/50"
-                              }
-                              ${(isHost || timeLeft === 0) ? "cursor-default" : "cursor-pointer active:scale-[0.99]"}
-                            `}
-                          >
-                            <div className="flex items-center gap-2.5 z-10 min-w-0 flex-1">
-                              <div className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center shrink-0 transition-colors
-                                ${isVoted
-                                  ? "bg-[#369d5c] border-[#369d5c] text-white"
-                                  : "border-slate-300 bg-white"
-                                }
-                              `}>
-                                {isVoted && <Check className="w-3 h-3 stroke-[3]" />}
-                              </div>
-                              <span className="font-bold text-xs md:text-sm truncate pr-1">
-                                {team.name}
-                              </span>
-                            </div>
-
-                            {showResults && (
-                              <div className="flex items-center gap-2 z-10 shrink-0 text-right">
-                                <span className="text-slate-800 font-bold text-xs md:text-sm">
-                                  {displayPercentage}
-                                </span>
-                                <span className="text-slate-400 text-[10px] font-semibold md:text-xs">
-                                  ({team.votes})
-                                </span>
-                              </div>
-                            )}
-
-                            {showResults && (
-                              <div
-                                className="absolute inset-y-0 left-0 bg-[#369d5c]/10 transition-all duration-500 ease-out z-0"
-                                style={{ width: `${percentage}%` }}
-                              />
-                            )}
-                          </button>
+                {/* Team Rows list (Scrollable if overflow) */}
+                <div className="flex-1 overflow-y-auto pr-0.5 flex flex-col gap-[10px] sm:gap-[12px]">
+                  {teams.map((team, index) => {
+                    const percent = getPercentage(team.votes);
+                    const isLeading = timeLeft === 0 && getWinner()?.id === team.id && totalVotes > 0;
+                    const isUserSelection = votedTeamIds.includes(team.id);
+                    const isMaxVotesReached = votedTeamIds.length >= 2;
+                    const isPendingThisTeam = pendingTeamId === team.id;
+                    const isButtonDisabled = isHost || timeLeft === 0 || !!pendingTeamId || (!isUserSelection && isMaxVotesReached);
+                    
+                    return (
+                      <div 
+                        key={team.id}
+                        className={`flex items-center justify-between p-2.5 sm:p-3 bg-white border rounded-[4px] transition-all duration-200 relative overflow-hidden gap-2 ${
+                          isUserSelection 
+                            ? "border-[#369d5c] bg-[#369d5c]/5 ring-1 ring-[#369d5c]" 
+                            : isLeading && isHost
+                              ? "border-amber-300 bg-amber-50/10" 
+                              : "border-slate-200 hover:border-slate-300"
+                        }`}
+                      >
+                        {/* Left: Avatar + Team Name (6px gap) */}
+                        <div className="flex items-center gap-[6px] sm:gap-2 min-w-0 flex-1">
+                          <div className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center font-bold text-xs text-white rounded-[4px] shrink-0"
+                               style={{ backgroundColor: `hsl(${135 + index * 45}, 45%, 43%)` }}>
+                            {team.name.charAt(0)}
+                          </div>
+                          <span className="font-bold text-slate-800 text-xs sm:text-sm md:text-base leading-tight break-words min-w-0" title={team.name}>
+                            {team.name}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
+
+                        {/* Middle: Vote representation (Host gets visual vote counts & progress bars) */}
+                        {isHost && (
+                          <div className="flex items-center gap-2 sm:gap-3 px-1 sm:px-3 flex-1 max-w-[140px] sm:max-w-xs md:max-w-md justify-end">
+                            <span className="text-[11px] sm:text-xs text-slate-600 font-bold shrink-0">
+                              {team.votes.toLocaleString()} <span className="hidden sm:inline">votes</span>
+                            </span>
+                            <div className="flex-1 bg-slate-100 h-2 rounded-[4px] overflow-hidden border border-slate-200/50 min-w-[40px]">
+                              <div 
+                                className="bg-[#369d5c] h-full rounded-[4px] transition-all duration-500"
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Right: Checkmark / Unvote Button */}
+                        <button
+                          onClick={() => handleVote(team.id)}
+                          disabled={isButtonDisabled}
+                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-[4px] border flex items-center justify-center transition-all duration-200 shrink-0 ${
+                            isHost || timeLeft === 0
+                              ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
+                              : isUserSelection
+                                ? "bg-[#369d5c] border-[#369d5c] text-white cursor-pointer shadow-sm hover:bg-rose-600 hover:border-rose-600 active:scale-95"
+                                : isMaxVotesReached
+                                  ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
+                                  : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95 cursor-pointer"
+                          }`}
+                          title={
+                            isHost 
+                              ? "Host không thể bình chọn" 
+                              : isUserSelection 
+                                ? "Nhấp để bỏ chọn đội này" 
+                                : isMaxVotesReached 
+                                  ? "Đã chọn đủ 2 lượt (Nhấp vào đội đã chọn để bỏ chọn)" 
+                                  : "Bình chọn cho đội này"
+                          }
+                        >
+                          {isPendingThisTeam ? (
+                            <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Check className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
+                          )}
+                        </button>
+
+                      </div>
+                    );
+                  })}
                 </div>
 
-                {!isHost && (
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-medium shrink-0 pt-1.5 border-t border-slate-100">
-                    <span>Lượt bình chọn còn lại: {Math.max(0, 2 - votedTeamIds.length)}</span>
-                    <span className="flex items-center gap-1"><Users className="w-3 h-3 text-[#369d5c]" /> Bình chọn an toàn qua Zalo</span>
-                  </div>
-                )}
+                {/* Voter Information note */}
+                <div className="text-center text-[10px] text-slate-400 mt-2 font-medium shrink-0 flex flex-col gap-[6px]">
+                  <p>{isHost ? "Giao diện Host (Host không thể bình chọn)." : "Mỗi người được vote tối đa 2 lần (không vote trùng đội)."}</p>
+                  <p className="text-slate-300 text-[8px]">Bảo mật và đồng bộ tự động • Xác thực theo IP & Thiết bị</p>
+                </div>
 
               </div>
             )}
 
           </div>
+
         </div>
+
       </main>
 
-      {/* HOST SETTING DRAWER */}
-      {isAdminOpen && (
-        <div className="fixed inset-y-0 right-0 w-80 bg-white border-l border-slate-200/80 shadow-2xl z-40 p-5 flex flex-col gap-4 animate-in slide-in-from-right duration-200">
-          <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-              <Settings className="w-4 h-4 text-[#369d5c]" /> Admin Control Panel
-            </h2>
-            <button
-              onClick={() => setIsAdminOpen(false)}
-              className="p-1 hover:bg-slate-100 rounded-[4px] cursor-pointer text-slate-400 hover:text-slate-600 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+      {/* FLOATING ACTION TOOLBAR */}
+      <div className="fixed bottom-4 right-4 flex items-center gap-2 z-40">
+        {isHost && (
+          <button
+            onClick={() => setIsAdminOpen(true)}
+            className="p-2 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Host Panel</span>
+          </button>
+        )}
+      </div>
 
-          <div className="flex-1 flex flex-col gap-4 overflow-y-auto">
-            {/* Session Status Block */}
-            <div className="flex flex-col gap-2">
+      {/* ADMIN OVERLAY CONFIG MODAL */}
+      {isAdminOpen && isHost && (
+        <div className="fixed inset-0 bg-black/45 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-[4px] shadow-2xl max-w-md w-full p-5 flex flex-col gap-[12px] relative animate-in fade-in zoom-in duration-200">
+            
+            {/* Modal Header */}
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <Settings className="w-4 h-4 text-[#369d5c]" />
+                Host Control Panel (Live)
+              </span>
+              <button 
+                onClick={() => setIsAdminOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-[4px] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Voting Session Toggle Control */}
+            <div className="flex flex-col gap-[6px]">
               <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Session Status</h3>
               <div className="flex items-center gap-2">
                 {votingStarted ? (
-                  <button
-                    onClick={() => sendHostAction("RESET_ALL")}
-                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
+                  <button 
+                    onClick={async () => {
+                      await sendHostAction("RESET_ALL");
+                      setIsHost(false);
+                      setIsAdminOpen(false);
+                      safeRemoveLocalStorage("voting_app_is_host");
+                      safeRemoveLocalStorage("voting_host_login_time");
+                    }}
+                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
                     <X className="w-3 h-3" /> End Voting & Sign Out
                   </button>
                 ) : (
-                  <button
+                  <button 
                     onClick={() => sendHostAction("START", { durationSeconds: duration })}
                     className="px-3 py-1.5 bg-[#369d5c] hover:bg-[#2c854e] text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
@@ -858,7 +819,7 @@ export default function Home() {
               <div className="flex flex-col gap-[6px] mt-1">
                 <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Timer Management</h3>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button
+                  <button 
                     onClick={() => sendHostAction("TOGGLE_TIMER")}
                     className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
@@ -868,36 +829,36 @@ export default function Home() {
                       <><Play className="w-3 h-3" /> Resume</>
                     )}
                   </button>
-                  <button
+                  <button 
                     onClick={() => sendHostAction("ADJUST_TIMER", { seconds: 60 })}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     + 1 min
                   </button>
-                  <button
+                  <button 
                     onClick={() => sendHostAction("ADJUST_TIMER", { seconds: -60 })}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     - 1 min
                   </button>
-                  <button
+                  <button 
                     onClick={() => sendHostAction("END_NOW")}
                     className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     End Now (0s)
                   </button>
                 </div>
-
+                
                 <div className="flex items-center gap-1.5 mt-1">
                   <span className="text-slate-500 text-xs font-medium">Reset timer:</span>
                   {[60, 300, 600].map(s => (
-                    <button
+                    <button 
                       key={s}
                       onClick={() => sendHostAction("START", { durationSeconds: s })}
                       className="px-2 py-1 bg-[#369d5c]/10 text-[#369d5c] font-semibold text-xs rounded-[4px] hover:bg-[#369d5c]/20 cursor-pointer"
                     >
                       {s / 60} min
-                    </button>
+                  </button>
                   ))}
                 </div>
               </div>
