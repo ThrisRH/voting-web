@@ -36,22 +36,37 @@ function getVotedList(val: any): string[] {
   return [];
 }
 
-// Helper to get client IP address
+// Helper to get client IP address across various proxy setups (Cloudflare, NGINX, Vercel, 4G, Wi-Fi)
 function getClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) {
-    return forwarded.split(",")[0].trim();
+  const headers = req.headers;
+
+  // 1. Cloudflare / Enterprise proxy headers
+  const cfIp = headers.get("cf-connecting-ip") || headers.get("true-client-ip") || headers.get("fastly-client-ip");
+  if (cfIp && cfIp.trim()) {
+    return cfIp.trim();
   }
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) {
+
+  // 2. X-Forwarded-For (take the first IP in the chain)
+  const forwarded = headers.get("x-forwarded-for");
+  if (forwarded) {
+    const firstIp = forwarded.split(",")[0].trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  // 3. X-Real-IP / X-Client-IP / X-Cluster-Client-IP
+  const realIp = headers.get("x-real-ip") || headers.get("x-client-ip") || headers.get("x-cluster-client-ip");
+  if (realIp && realIp.trim()) {
     return realIp.trim();
   }
-  
+
+  // 4. NextRequest ip property
   const ipField = (req as any).ip;
-  if (ipField) {
-    return ipField.trim();
+  if (ipField && String(ipField).trim()) {
+    return String(ipField).trim();
   }
-  
+
   return "127.0.0.1";
 }
 

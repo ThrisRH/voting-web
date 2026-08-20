@@ -29,31 +29,65 @@ interface Team {
 
 const ADMIN_PASSWORD = "123456";
 
+// Safe localStorage access wrappers that never throw in private/incognito modes
+function safeGetLocalStorage(key: string): string | null {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeSetLocalStorage(key: string, val: string): void {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    localStorage.setItem(key, val);
+  } catch (e) {
+    // Ignore storage restrictions in incognito mode
+  }
+}
+
+function safeRemoveLocalStorage(key: string): void {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    localStorage.removeItem(key);
+  } catch (e) {
+    // Ignore storage restrictions
+  }
+}
+
+let memoryVoterId = "";
+
 // Helper to get device fingerprint
 function getDeviceFingerprint(): string {
-  if (typeof window === "undefined") return "";
-  const nav = window.navigator;
-  const screen = window.screen;
-  
-  const components = [
-    nav.userAgent || "",
-    nav.language || "",
-    screen.colorDepth || 0,
-    screen.width + "x" + screen.height,
-    screen.availWidth + "x" + screen.availHeight,
-    new Date().getTimezoneOffset(),
-    nav.hardwareConcurrency || 0,
-    nav.platform || ""
-  ];
-  
-  let hash = 0;
-  const str = components.join("||");
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0;
+  try {
+    if (typeof window === "undefined") return "";
+    const nav = window.navigator || ({} as Navigator);
+    const screen = window.screen || ({} as Screen);
+    
+    const components = [
+      nav.userAgent || "",
+      nav.language || "",
+      screen.colorDepth || 0,
+      screen.width ? screen.width + "x" + screen.height : "",
+      screen.availWidth ? screen.availWidth + "x" + screen.availHeight : "",
+      new Date().getTimezoneOffset(),
+      nav.hardwareConcurrency || 0,
+      nav.platform || ""
+    ];
+    
+    let hash = 0;
+    const str = components.join("||");
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return "fp_" + Math.abs(hash).toString(36);
+  } catch (e) {
+    return "fp_fallback_" + Math.random().toString(36).substring(2, 8);
   }
-  return "fp_" + Math.abs(hash).toString(36);
 }
 
 export default function Home() {
@@ -88,59 +122,91 @@ export default function Home() {
 
   // Initialize voterId on client mount
   useEffect(() => {
-    let id = localStorage.getItem("voting_voter_id");
-    if (!id) {
-      id = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
-      localStorage.setItem("voting_voter_id", id);
+    try {
+      let id = safeGetLocalStorage("voting_voter_id");
+      if (!id) {
+        if (!memoryVoterId) {
+          memoryVoterId = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+        }
+        id = memoryVoterId;
+        safeSetLocalStorage("voting_voter_id", id);
+      }
+      setVoterId(id);
+    } catch (e) {
+      setVoterId("voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9));
     }
-    setVoterId(id);
   }, []);
 
   // Fetch initial config and check voter status once voterId is initialized
   useEffect(() => {
     if (!voterId) return;
 
+    let isSubscribed = true;
+
     async function initializeClient() {
       try {
         const fp = getDeviceFingerprint();
-        // 1. Fetch IP & voted status from API
-        const statusRes = await fetch(`/api/voting?voterId=${encodeURIComponent(voterId)}&fingerprint=${encodeURIComponent(fp)}`);
-        if (statusRes.ok) {
-          const data = await statusRes.json();
-          setClientIp(data.clientIp || "127.0.0.1");
-          if (Array.isArray(data.votedTeamIds)) {
-            setVotedTeamIds(data.votedTeamIds);
-          } else if (data.votedTeamId) {
-            setVotedTeamIds([data.votedTeamId]);
-          } else {
-            setVotedTeamIds([]);
+        // 1. Fetch IP & voted status from API with cache: no-store
+        const statusRes = await fetch(
+          `/api/voting?voterId=${encodeURIComponent(voterId)}&fingerprint=${encodeURIComponent(fp)}`,
+          { cache: "no-store" }
+        ).catch(() => null);
+
+        if (statusRes && statusRes.ok) {
+          const data = await statusRes.json().catch(() => ({}));
+          if (isSubscribed) {
+            setClientIp(data.clientIp || "127.0.0.1");
+            if (Array.isArray(data.votedTeamIds)) {
+              setVotedTeamIds(data.votedTeamIds);
+            } else if (data.votedTeamId) {
+              setVotedTeamIds([data.votedTeamId]);
+            } else {
+              setVotedTeamIds([]);
+            }
           }
         }
 
-        // 2. Fetch team config names
-        const configRes = await fetch("/teams.json");
-        if (configRes.ok) {
-          const config = await configRes.json();
-          setDuration(config.votingDurationSeconds || 300);
-          setTeamNamesConfig(config.teams || []);
+        // 2. Fetch team config names with cache: no-store
+        const configRes = await fetch("/teams.json", { cache: "no-store" }).catch(() => null);
+        let defaultTeams = ["Team 1", "Team 2", "Team 3", "Team 4"];
+        if (configRes && configRes.ok) {
+          const config = await configRes.json().catch(() => null);
+          if (config) {
+            setDuration(config.votingDurationSeconds || 300);
+            if (Array.isArray(config.teams) && config.teams.length > 0) {
+              defaultTeams = config.teams;
+            }
+          }
+        }
+        if (isSubscribed) {
+          setTeamNamesConfig(defaultTeams);
         }
       } catch (err) {
         console.error("Initialization error:", err);
+        if (isSubscribed) {
+          setTeamNamesConfig(["Team 1", "Team 2", "Team 3", "Team 4"]);
+        }
       } finally {
-        setLoading(false);
+        if (isSubscribed) {
+          setLoading(false);
+        }
       }
     }
 
     initializeClient();
 
     // Check host status in localStorage
-    const hostFlag = localStorage.getItem("voting_app_is_host") === "true";
+    const hostFlag = safeGetLocalStorage("voting_app_is_host") === "true";
     setIsHost(hostFlag);
+
+    return () => {
+      isSubscribed = false;
+    };
   }, [voterId]);
 
   // Listen to Firestore changes in real-time
   useEffect(() => {
-    if (loading || teamNamesConfig.length === 0 || !voterId) return;
+    if (loading || !voterId) return;
 
     const docRef = doc(db, "sessions", "voting_session");
     
@@ -157,14 +223,15 @@ export default function Home() {
           
           // Check if session was reset: auto log out Host if reset occurred after/at Host login
           const resetTimestamp = data.resetTimestamp || 0;
-          const hostLoginTime = parseInt(localStorage.getItem("voting_host_login_time") || "0", 10);
+          const hostLoginTime = parseInt(safeGetLocalStorage("voting_host_login_time") || "0", 10);
           if (resetTimestamp > 0 && (hostLoginTime === 0 || resetTimestamp >= hostLoginTime)) {
             setIsHost(false);
-            localStorage.removeItem("voting_app_is_host");
-            localStorage.removeItem("voting_host_login_time");
+            safeRemoveLocalStorage("voting_app_is_host");
+            safeRemoveLocalStorage("voting_host_login_time");
           }
           const votesMap = data.votes || {};
-          const updatedTeams = teamNamesConfig.map((name, idx) => {
+          const currentConfig = teamNamesConfig.length > 0 ? teamNamesConfig : ["Team 1", "Team 2", "Team 3", "Team 4"];
+          const updatedTeams = currentConfig.map((name, idx) => {
             const id = `team-${idx + 1}`;
             return {
               id,
@@ -178,7 +245,7 @@ export default function Home() {
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
-          // Update votedTeamIds based on composite key (IP + fingerprint) or voterId
+          // Update votedTeamIds based on composite key (IP + fingerprint), voterId, and fp
           const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
           const sanitizedIp = clientIp ? clientIp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
           const fp = getDeviceFingerprint();
@@ -196,7 +263,8 @@ export default function Home() {
 
           const compositeVotes = voterKey ? getVotedList(votedDevicesMap[voterKey]) : [];
           const deviceVotes = sanitizedVoterId ? getVotedList(votedDevicesMap[sanitizedVoterId]) : [];
-          const currentVotedIds = Array.from(new Set([...compositeVotes, ...deviceVotes]));
+          const fpVotes = sanitizedFp ? getVotedList(votedDevicesMap[`fp_${sanitizedFp}`]) : [];
+          const currentVotedIds = Array.from(new Set([...compositeVotes, ...deviceVotes, ...fpVotes]));
 
           if (!pendingTeamIdRef.current) {
             setVotedTeamIds(currentVotedIds);
@@ -398,8 +466,8 @@ export default function Home() {
     if (passwordInput === ADMIN_PASSWORD) {
       setIsHost(true);
       setPasswordError(false);
-      localStorage.setItem("voting_app_is_host", "true");
-      localStorage.setItem("voting_host_login_time", Date.now().toString());
+      safeSetLocalStorage("voting_app_is_host", "true");
+      safeSetLocalStorage("voting_host_login_time", Date.now().toString());
     } else {
       setPasswordError(true);
     }
@@ -724,7 +792,8 @@ export default function Home() {
                       await sendHostAction("RESET_ALL");
                       setIsHost(false);
                       setIsAdminOpen(false);
-                      localStorage.removeItem("voting_app_is_host");
+                      safeRemoveLocalStorage("voting_app_is_host");
+                      safeRemoveLocalStorage("voting_host_login_time");
                     }}
                     className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
