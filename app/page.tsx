@@ -642,6 +642,49 @@ export default function Home() {
               <div className="flex-1 flex justify-center items-center py-4">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[#369d5c]"></div>
               </div>
+            ) : !tokenValid && !isHost ? (
+              
+              /* TOP-LEVEL SECURITY VIOLATION: Blocked on both Waiting and Live Voting sessions */
+              <div className="flex-1 flex flex-col justify-center items-center text-center p-2 gap-2">
+                <div className="w-full max-w-xs p-3 bg-rose-50 border border-rose-200 rounded-[6px] text-center flex flex-col items-center gap-1.5 text-rose-700 shadow-sm animate-pulse">
+                  <AlertCircle className="w-6 h-6 text-rose-500 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <h3 className="font-bold text-[11px]">Từ Chối Truy Cập (Security Violation)</h3>
+                    <p className="text-[10px] text-rose-600 leading-snug">
+                      {tokenError || "Mã Token/Link này được tạo từ một thiết bị khác. Bạn không thể sử dụng link copy để bình chọn!"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Host authentication login form for admin override */}
+                <form onSubmit={handleHostLogin} className="w-full max-w-[240px] mt-2 pt-1.5 border-t border-slate-100 flex flex-col gap-0.5">
+                  <div className="flex items-center justify-between text-[9px] text-slate-400 font-medium">
+                    <span>Host access:</span>
+                    {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="relative flex-1 flex items-center">
+                      <div className="absolute left-2 inset-y-0 flex items-center pointer-events-none text-slate-400">
+                        <Lock className="w-3 h-3 shrink-0" />
+                      </div>
+                      <input
+                        type="password"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        placeholder="Password..."
+                        className="w-full pl-6 pr-2 py-0.5 bg-slate-50 border border-slate-200 rounded-[4px] text-[11px] focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="p-1 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
+                    >
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </form>
+              </div>
+
             ) : !votingStarted ? (
               
               /* CASE 1: Voting NOT STARTED Yet */
@@ -667,49 +710,34 @@ export default function Home() {
                 ) : (
                   /* Employee waiting view */
                   <div className="flex flex-col items-center gap-1.5 w-full max-w-xs">
-                    {!tokenValid ? (
-                      /* Security violation when copying URL to another device */
-                      <div className="w-full p-2 bg-rose-50 border border-rose-200 rounded-[6px] text-center flex flex-col items-center gap-1 text-rose-700 shadow-sm animate-pulse">
-                        <AlertCircle className="w-6 h-6 text-rose-500 shrink-0" />
-                        <div className="flex flex-col gap-0.5">
-                          <h3 className="font-bold text-[11px]">Từ Chối Truy Cập (Security Violation)</h3>
-                          <p className="text-[10px] text-rose-600 leading-snug">
-                            {tokenError || "Mã Token/Link này được tạo từ một thiết bị khác. Bạn không thể sử dụng link copy để bình chọn!"}
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="w-8 h-8 bg-slate-50 text-slate-400 rounded-[4px] border border-slate-100 flex items-center justify-center animate-bounce">
-                          <Users className="w-4 h-4" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <h2 className="font-bold text-slate-700 text-xs">Voting Session Coming Up</h2>
-                          <p className="text-[10px] text-slate-400">Please wait for the host to start the voting session.</p>
-                        </div>
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 border border-amber-100 text-[9px] font-bold rounded-[4px] uppercase animate-pulse">
-                          Waiting to Begin
-                        </span>
+                    <div className="w-8 h-8 bg-slate-50 text-slate-400 rounded-[4px] border border-slate-100 flex items-center justify-center animate-bounce">
+                      <Users className="w-4 h-4" />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <h2 className="font-bold text-slate-700 text-xs">Voting Session Coming Up</h2>
+                      <p className="text-[10px] text-slate-400">Please wait for the host to start the voting session.</p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 border border-amber-100 text-[9px] font-bold rounded-[4px] uppercase animate-pulse">
+                      Waiting to Begin
+                    </span>
 
-                        {/* 6-Digit Code Badge for Voter */}
-                        {voterCode && (
-                          <div className="w-full mt-0.5 p-2 bg-slate-900 border border-emerald-500/30 rounded-[6px] text-center shadow-md text-white flex flex-col items-center gap-1">
-                            <div className="flex items-center gap-1 text-emerald-400 text-[9px] font-bold uppercase tracking-wider">
-                              <Lock className="w-3 h-3" /> Mã Định Danh Người Vote
-                            </div>
-                            <div className="flex items-center justify-center gap-1 my-0.5">
-                              {voterCode.split("").map((digit, idx) => (
-                                <span key={idx} className="w-6 h-8 flex items-center justify-center text-base font-mono font-extrabold bg-slate-950 border border-emerald-500/40 text-emerald-300 rounded-[4px] shadow-inner">
-                                  {digit}
-                                </span>
-                              ))}
-                            </div>
-                            <p className="text-[8px] sm:text-[9px] text-slate-300 font-medium">
-                              Mã định danh 6 số gắn liền với thiết bị & IP của bạn. Token đã được xác thực an toàn.
-                            </p>
-                          </div>
-                        )}
-                      </>
+                    {/* 6-Digit Code Badge for Voter */}
+                    {voterCode && (
+                      <div className="w-full mt-0.5 p-2 bg-slate-900 border border-emerald-500/30 rounded-[6px] text-center shadow-md text-white flex flex-col items-center gap-1">
+                        <div className="flex items-center gap-1 text-emerald-400 text-[9px] font-bold uppercase tracking-wider">
+                          <Lock className="w-3 h-3" /> Mã Định Danh Người Vote
+                        </div>
+                        <div className="flex items-center justify-center gap-1 my-0.5">
+                          {voterCode.split("").map((digit, idx) => (
+                            <span key={idx} className="w-6 h-8 flex items-center justify-center text-base font-mono font-extrabold bg-slate-950 border border-emerald-500/40 text-emerald-300 rounded-[4px] shadow-inner">
+                              {digit}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-[8px] sm:text-[9px] text-slate-300 font-medium">
+                          Mã định danh 6 số gắn liền với thiết bị & IP của bạn. Token đã được xác thực an toàn.
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}
