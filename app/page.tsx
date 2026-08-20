@@ -155,7 +155,14 @@ export default function Home() {
           setEndTime(data.endTime || null);
           setPausedTimeLeft(data.pausedTimeLeft !== undefined ? data.pausedTimeLeft : duration);
           
-          // Map team names config to real-time votes counts
+          // Check if session was reset: auto log out Host if reset occurred after/at Host login
+          const resetTimestamp = data.resetTimestamp || 0;
+          const hostLoginTime = parseInt(localStorage.getItem("voting_host_login_time") || "0", 10);
+          if (resetTimestamp > 0 && (hostLoginTime === 0 || resetTimestamp >= hostLoginTime)) {
+            setIsHost(false);
+            localStorage.removeItem("voting_app_is_host");
+            localStorage.removeItem("voting_host_login_time");
+          }
           const votesMap = data.votes || {};
           const updatedTeams = teamNamesConfig.map((name, idx) => {
             const id = `team-${idx + 1}`;
@@ -392,6 +399,7 @@ export default function Home() {
       setIsHost(true);
       setPasswordError(false);
       localStorage.setItem("voting_app_is_host", "true");
+      localStorage.setItem("voting_host_login_time", Date.now().toString());
     } else {
       setPasswordError(true);
     }

@@ -25,6 +25,7 @@ interface SessionState {
   votes: Record<string, number>;
   votedIps: Record<string, string | string[]>; // IP -> teamId or array of teamIds
   votedDevices?: Record<string, string | string[]>; // voterId -> teamId or array of teamIds
+  resetTimestamp?: number;
 }
 
 // Helper to normalize votes to array of strings
@@ -383,7 +384,8 @@ export async function PUT(req: NextRequest) {
       pausedTimeLeft: store.duration,
       votes: resetVotes,
       votedIps: {},
-      votedDevices: {}
+      votedDevices: {},
+      resetTimestamp: Date.now()
     });
   }
   else if (action === "RESET_VOTES") {

@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
       votes: initialVotes,
       votedIps: {},
       votedDevices: {},
+      resetTimestamp: Date.now(),
     };
 
     const sessionDocRef = doc(db, "sessions", "voting_session");
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "✅ Đã reset toàn bộ dữ liệu bình chọn thành công!",
+      message: "✅ Đã reset toàn bộ dữ liệu bình chọn & đăng xuất Host thành công!",
       resetAt: new Date().toISOString(),
     });
   } catch (err) {
