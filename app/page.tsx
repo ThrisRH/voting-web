@@ -83,8 +83,7 @@ function getDeviceFingerprint(): string {
     // across all Webviews/browsers on the same device.
     const components = [
       screen.width && screen.height ? screen.width + "x" + screen.height : "",
-      nav.hardwareConcurrency || 0,
-      gpu
+      nav.hardwareConcurrency || 0
     ];
     
     let hash = 0;
@@ -126,6 +125,85 @@ export default function Home() {
   // UI States
   const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
   const [serverVoterKey, setServerVoterKey] = useState<string>("");
+  const [biometricFingerprint, setBiometricFingerprint] = useState<string>("");
+  const [showBiometricModal, setShowBiometricModal] = useState<boolean>(false);
+  const [isBiometricSupported, setIsBiometricSupported] = useState<boolean>(true);
+  const [biometricError, setBiometricError] = useState<string | null>(null);
+  const [biometricLoading, setBiometricLoading] = useState<boolean>(false);
+
+  // Checks device biometric capability on client mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const supported = !!window.PublicKeyCredential;
+      setIsBiometricSupported(supported);
+      if (!supported) {
+        setBiometricError("Trình duyệt hoặc ứng dụng không hỗ trợ vân tay/FaceID. Vui lòng mở bằng Chrome hoặc Safari gốc để tiếp tục!");
+      }
+    }
+  }, []);
+
+  // Triggers WebAuthn registration interface on the OS (Fingerprint/FaceID)
+  const triggerBiometricScan = async (): Promise<string | null> => {
+    setBiometricLoading(true);
+    setBiometricError(null);
+    try {
+      if (typeof window === "undefined" || !window.PublicKeyCredential) {
+        throw new Error("Trình duyệt không hỗ trợ quét sinh trắc học!");
+      }
+
+      // Generate localized credential creation parameters
+      const challenge = new Uint8Array(32);
+      window.crypto.getRandomValues(challenge);
+
+      const userId = new Uint8Array(16);
+      window.crypto.getRandomValues(userId);
+
+      const creationOptions: PublicKeyCredentialCreationOptions = {
+        challenge: challenge,
+        rp: {
+          name: "O.Tech Voting",
+          id: window.location.hostname
+        },
+        user: {
+          id: userId,
+          name: "voter@otech-voting.com",
+          displayName: "Otech Voter"
+        },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256 algorithm
+        authenticatorSelection: {
+          authenticatorAttachment: "platform", // Enforce built-in Touch ID/FaceID/Windows Hello
+          userVerification: "required"
+        },
+        timeout: 60000
+      };
+
+      const credential = await navigator.credentials.create({
+        publicKey: creationOptions
+      }) as PublicKeyCredential;
+
+      if (!credential) {
+        throw new Error("Không lấy được thông tin xác thực!");
+      }
+
+      const hashId = credential.id;
+      setBiometricFingerprint(hashId);
+      setShowBiometricModal(false);
+      setBiometricError(null);
+      return hashId;
+    } catch (err: any) {
+      console.error("Biometric Authentication failed:", err);
+      let errMsg = "Không thể quét vân tay/FaceID. Vui lòng thử lại!";
+      if (err.name === "NotAllowedError") {
+        errMsg = "Quyền truy cập vân tay/FaceID bị từ chối hoặc bị hủy.";
+      } else if (err.message) {
+        errMsg = err.message;
+      }
+      setBiometricError(errMsg);
+      return null;
+    } finally {
+      setBiometricLoading(false);
+    }
+  };
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -387,6 +465,15 @@ export default function Home() {
     setPendingTeamId(teamId);
     pendingTeamIdRef.current = teamId;
 
+    // If biometric credential has not been created yet, show modal and request authentication first
+    let currentFp = biometricFingerprint;
+    if (!currentFp) {
+      setShowBiometricModal(true);
+      setPendingTeamId(null);
+      pendingTeamIdRef.current = null;
+      return;
+    }
+
     // Optimistic Update (Immediate visual response)
     const previousVotedIds = [...votedTeamIds];
     let nextVotedIds: string[];
@@ -399,11 +486,10 @@ export default function Home() {
     setVotedTeamIds(nextVotedIds);
 
     try {
-      const fp = getDeviceFingerprint();
       const res = await fetch("/api/voting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teamId, voterId, fingerprint: fp })
+        body: JSON.stringify({ teamId, voterId, fingerprint: currentFp })
       });
 
       const data = await res.json();
@@ -867,6 +953,64 @@ export default function Home() {
               Use Session Status to activate or end voting, and Timer Management to control the countdown timer in real-time.
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* BIOMETRIC AUTHENTICATION MODAL */}
+      {showBiometricModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#e2e8f0] p-6 rounded-[8px] max-w-sm w-full shadow-xl flex flex-col items-center text-center gap-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 bg-[#369d5c]/10 text-[#369d5c] rounded-full flex items-center justify-center">
+              <Award className="w-8 h-8 animate-pulse" />
+            </div>
+            
+            <div className="flex flex-col gap-1.5">
+              <h2 className="font-bold text-slate-800 text-lg">Xác Thực Vân Tay / FaceID</h2>
+              <p className="text-xs text-slate-500 leading-relaxed px-2">
+                Để chống bỏ phiếu gian lận, chúng tôi yêu cầu quét vân tay hoặc FaceID của thiết bị để bắt đầu bình chọn.
+              </p>
+            </div>
+
+            {biometricError && (
+              <div className="w-full p-3 bg-rose-50 border border-rose-100 rounded-[4px] text-[11px] text-rose-600 text-left font-medium leading-relaxed">
+                {biometricError}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 w-full mt-2">
+              {isBiometricSupported ? (
+                <button
+                  onClick={async () => {
+                    const id = await triggerBiometricScan();
+                    if (id) {
+                      setBiometricFingerprint(id);
+                      // Trigger a quick friendly message
+                      setErrorMessage("Xác thực vân tay thành công! Vui lòng thực hiện lại lượt bình chọn.");
+                      setTimeout(() => setErrorMessage(null), 4000);
+                    }
+                  }}
+                  disabled={biometricLoading}
+                  className="w-full py-2.5 bg-[#369d5c] hover:bg-[#2c854e] text-white font-bold text-sm rounded-[4px] shadow-sm flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {biometricLoading ? "Đang kết nối sinh trắc học..." : "Quét Vân Tay / FaceID"}
+                </button>
+              ) : (
+                <div className="w-full text-center text-xs font-semibold text-rose-500 mt-1">
+                  Môi trường không hỗ trợ. Vui lòng mở link trực tiếp bằng Safari hoặc Chrome của điện thoại!
+                </div>
+              )}
+              
+              <button
+                onClick={() => {
+                  setShowBiometricModal(false);
+                  setBiometricError(null);
+                }}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs rounded-[4px] cursor-pointer"
+              >
+                Hủy
+              </button>
+            </div>
           </div>
         </div>
       )}
