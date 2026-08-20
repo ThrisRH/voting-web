@@ -62,6 +62,7 @@ function safeRemoveLocalStorage(key: string): void {
   }
 }
 
+<<<<<<< HEAD
 // Read Zalo User from document cookies
 function getZaloUserFromCookie(): ZaloUser | null {
   if (typeof document === "undefined") return null;
@@ -72,6 +73,38 @@ function getZaloUserFromCookie(): ZaloUser | null {
     } catch (e) {
       return null;
     }
+=======
+let memoryVoterId = "";
+
+// Helper to get device fingerprint
+function getDeviceFingerprint(): string {
+  try {
+    if (typeof window === "undefined") return "";
+    const nav = window.navigator || ({} as Navigator);
+    const screen = window.screen || ({} as Screen);
+    
+    const components = [
+      nav.userAgent || "",
+      nav.language || "",
+      screen.colorDepth || 0,
+      screen.width ? screen.width + "x" + screen.height : "",
+      screen.availWidth ? screen.availWidth + "x" + screen.availHeight : "",
+      new Date().getTimezoneOffset(),
+      nav.hardwareConcurrency || 0,
+      nav.platform || ""
+    ];
+    
+    let hash = 0;
+    const str = components.join("||");
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return "fp_" + Math.abs(hash).toString(36);
+  } catch (e) {
+    return "fp_fallback_" + Math.random().toString(36).substring(2, 8);
+>>>>>>> parent of bacd951 (update code)
   }
   return null;
 }
