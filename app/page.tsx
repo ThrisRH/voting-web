@@ -143,7 +143,16 @@ export default function Home() {
   }, []);
 
   // Triggers WebAuthn registration interface on the OS (Fingerprint/FaceID)
+  // Reuses the previously created credential from local storage if available to keep the fingerprint persistent.
   const triggerBiometricScan = async (): Promise<string | null> => {
+    // 1. Try to read existing biometric ID from local storage first to ensure 100% consistency across sessions
+    const cachedBioId = safeGetLocalStorage("voting_biometric_id");
+    if (cachedBioId) {
+      setBiometricFingerprint(cachedBioId);
+      setShowBiometricModal(false);
+      return cachedBioId;
+    }
+
     setBiometricLoading(true);
     setBiometricError(null);
     try {
@@ -186,6 +195,10 @@ export default function Home() {
       }
 
       const hashId = credential.id;
+      
+      // Save to localStorage safely to keep it permanent on this browser environment
+      safeSetLocalStorage("voting_biometric_id", hashId);
+      
       setBiometricFingerprint(hashId);
       setShowBiometricModal(false);
       setBiometricError(null);
