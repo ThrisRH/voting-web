@@ -15,6 +15,15 @@ import {
 const ADMIN_PASSWORD = "123456";
 const CONFIG_FILE_PATH = path.join(process.cwd(), "public", "teams.json");
 
+interface TokenRecord {
+  code: string;           // 6-digit code e.g. "482910"
+  voterId: string;
+  ip: string;
+  fingerprint: string;
+  deviceSignature: string;
+  createdAt: number;
+}
+
 interface SessionState {
   votingStarted: boolean;
   timerRunning: boolean;
@@ -25,7 +34,25 @@ interface SessionState {
   votes: Record<string, number>;
   votedIps: Record<string, string | string[]>; // IP -> teamId or array of teamIds
   votedDevices?: Record<string, string | string[]>; // voterId -> teamId or array of teamIds
+  voterTokens?: Record<string, TokenRecord>; // token -> TokenRecord
   resetTimestamp?: number;
+}
+
+// Helper to generate a unique 6-digit voter code not used in active DB tokens
+function generateUniqueCode(existingTokens: Record<string, TokenRecord>): string {
+  const usedCodes = new Set(
+    Object.values(existingTokens || {}).map(rec => rec?.code).filter(Boolean)
+  );
+
+  let attempts = 0;
+  while (attempts < 1000) {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    if (!usedCodes.has(code)) {
+      return code;
+    }
+    attempts++;
+  }
+  return (Date.now() % 1000000).toString().padStart(6, "0");
 }
 
 // Helper to normalize votes to array of strings
@@ -177,13 +204,23 @@ function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): s
   return `ip_${ipSegment}_fp_${sanitizedFp || sanitizedVoterId}`;
 }
 
-// GET handler: returns current status and if client device has voted
+// GET handler: returns current status, voted team list, 6-digit code, and security token
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req);
   const store = await getSessionDoc();
   const url = new URL(req.url);
   const voterId = url.searchParams.get("voterId") || "";
   const fingerprint = url.searchParams.get("fingerprint") || "";
+  const tokenFromQuery = url.searchParams.get("token") || "";
+
+  const userAgent = req.headers.get("user-agent") || "";
+  let deviceSignature = "";
+  try {
+    if (userAgent) {
+      const parsed = deviceDetector.parse(userAgent);
+      deviceSignature = `${parsed.os?.name || ""}_${parsed.client?.name || ""}`;
+    }
+  } catch (e) {}
 
   // Read team names from CONFIG_FILE_PATH
   let teamNames: string[] = ["Nhóm 1", "Nhóm 2", "Nhóm 3", "Nhóm 4"];
@@ -209,6 +246,62 @@ export async function GET(req: NextRequest) {
   const voterKey = getVoterKey(req, voterId, fingerprint);
   const votedTeamIds = store.votedDevices && voterKey ? getVotedList(store.votedDevices[voterKey]) : [];
 
+  // Token & 6-digit Code verification logic
+  const voterTokens = store.voterTokens || {};
+  let activeToken = tokenFromQuery;
+  let activeCode = "";
+  let tokenValid = true;
+  let tokenError = "";
+
+  if (tokenFromQuery) {
+    const rec = voterTokens[tokenFromQuery];
+    if (!rec) {
+      // Old token was cleared during host/endpoint reset.
+      // Allow user to enter waiting state with a BRAND NEW 6-digit code & token.
+      tokenValid = true;
+      activeToken = "";
+    } else {
+      const isFpMatch = fingerprint && rec.fingerprint && rec.fingerprint === fingerprint;
+      const isVoterIdMatch = voterId && rec.voterId && rec.voterId === voterId;
+
+      if (!isFpMatch && !isVoterIdMatch) {
+        tokenValid = false;
+        tokenError = "🔒 Từ chối truy cập: Link/Token này được tạo trên một thiết bị khác! Bạn không thể sử dụng link copy để bình chọn.";
+      } else {
+        activeToken = tokenFromQuery;
+        activeCode = rec.code;
+      }
+    }
+  }
+
+  if (tokenValid && !activeCode) {
+    const existingEntry = Object.entries(voterTokens).find(([_, rec]) => {
+      return (fingerprint && rec.fingerprint === fingerprint) || (voterId && rec.voterId === voterId);
+    });
+
+    if (existingEntry) {
+      activeToken = existingEntry[0];
+      activeCode = existingEntry[1].code;
+    } else if (voterId || fingerprint) {
+      activeCode = generateUniqueCode(voterTokens);
+      activeToken = "vtok_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now().toString(36);
+
+      const newRecord: TokenRecord = {
+        code: activeCode,
+        voterId,
+        ip,
+        fingerprint,
+        deviceSignature,
+        createdAt: Date.now()
+      };
+
+      voterTokens[activeToken] = newRecord;
+
+      const sessionDocRef = doc(db, "sessions", "voting_session");
+      await updateDoc(sessionDocRef, { voterTokens }).catch(err => console.error("Error saving voterTokens:", err));
+    }
+  }
+
   return NextResponse.json({
     title: store.title,
     duration: store.duration,
@@ -221,7 +314,11 @@ export async function GET(req: NextRequest) {
     hasVoted: votedTeamIds.length >= 2,
     votedTeamIds: votedTeamIds,
     votedTeamId: votedTeamIds.length > 0 ? votedTeamIds[0] : null,
-    voterKey: voterKey
+    voterKey: voterKey,
+    token: activeToken,
+    voterCode: activeCode,
+    tokenValid: tokenValid,
+    tokenError: tokenError
   });
 }
 
@@ -229,7 +326,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
   const body = await req.json();
-  const { teamId, voterId, fingerprint } = body;
+  const { teamId, voterId, fingerprint, token } = body;
 
   if (!teamId) {
     return NextResponse.json({ error: "Missing teamId" }, { status: 400 });
@@ -247,6 +344,21 @@ export async function POST(req: NextRequest) {
       }
 
       const session = sessionSnap.data() as SessionState;
+      const voterTokens = session.voterTokens || {};
+
+      // Security check: validate token and device binding
+      if (token) {
+        const rec = voterTokens[token];
+        if (!rec) {
+          return { error: "🔒 Token bình chọn không hợp lệ hoặc đã bị hết hạn!" };
+        }
+        const isFpMatch = fingerprint && rec.fingerprint && rec.fingerprint === fingerprint;
+        const isVoterIdMatch = voterId && rec.voterId && rec.voterId === voterId;
+
+        if (!isFpMatch && !isVoterIdMatch) {
+          return { error: "🔒 Từ chối truy cập: Thiết bị của bạn không khớp với Token bình chọn này!" };
+        }
+      }
       const votedDevices = session.votedDevices || {};
 
       // Read existing votes for voterKey
@@ -357,7 +469,7 @@ export async function PUT(req: NextRequest) {
     });
   } 
   else if (action === "RESET_ALL") {
-    // Reset voting session variables and clear votedDevices/votedIps map
+    // Reset voting session variables and clear votedDevices/votedIps/voterTokens map
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
@@ -371,11 +483,12 @@ export async function PUT(req: NextRequest) {
       votes: resetVotes,
       votedIps: {},
       votedDevices: {},
+      voterTokens: {},
       resetTimestamp: Date.now()
     });
   }
   else if (action === "RESET_VOTES") {
-    // Reset votes only and clear votedDevices/votedIps map
+    // Reset votes only and clear votedDevices/votedIps/voterTokens map
     const resetVotes: Record<string, number> = {};
     Object.keys(store.votes).forEach(key => {
       resetVotes[key] = 0;
@@ -384,7 +497,9 @@ export async function PUT(req: NextRequest) {
     await updateDoc(sessionDocRef, {
       votes: resetVotes,
       votedIps: {},
-      votedDevices: {}
+      votedDevices: {},
+      voterTokens: {},
+      resetTimestamp: Date.now()
     });
   }
   else if (action === "TOGGLE_TIMER") {

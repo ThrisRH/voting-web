@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
       votes: initialVotes,
       votedIps: {},
       votedDevices: {},
+      voterTokens: {},
       resetTimestamp: Date.now(),
     };
 

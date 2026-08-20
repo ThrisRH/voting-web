@@ -129,10 +129,16 @@ export default function Home() {
   // UI States
   const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
   const [serverVoterKey, setServerVoterKey] = useState<string>("");
+  const [voterCode, setVoterCode] = useState<string>("");
+  const [token, setToken] = useState<string>("");
+  const [tokenValid, setTokenValid] = useState<boolean>(true);
+  const [tokenError, setTokenError] = useState<string | null>(null);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confettiFired, setConfettiFired] = useState<boolean>(false);
+
+  const lastResetTimestampRef = useRef<number>(0);
 
   // Consolidated fail-safe client initialization (runs once on mount)
   useEffect(() => {
@@ -153,12 +159,21 @@ export default function Home() {
 
         const fp = getDeviceFingerprint();
 
+        // Read token from URL query or localStorage
+        let urlToken = "";
+        try {
+          if (typeof window !== "undefined") {
+            const urlParams = new URLSearchParams(window.location.search);
+            urlToken = urlParams.get("token") || safeGetLocalStorage("voting_voter_token") || "";
+          }
+        } catch (e) {}
+
         // 2. Fetch IP & voted status from API with 3.5s timeout
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3500);
 
         const statusRes = await fetch(
-          `/api/voting?voterId=${encodeURIComponent(id)}&fingerprint=${encodeURIComponent(fp)}`,
+          `/api/voting?voterId=${encodeURIComponent(id)}&fingerprint=${encodeURIComponent(fp)}&token=${encodeURIComponent(urlToken)}`,
           { cache: "no-store", signal: controller.signal }
         ).catch(() => null);
         clearTimeout(timeoutId);
@@ -167,10 +182,25 @@ export default function Home() {
           const data = await statusRes.json().catch(() => ({}));
           if (isSubscribed) {
             setClientIp(data.clientIp || "127.0.0.1");
-            // Capture voterKey from backend dynamically to ensure 100% match
-            if (data.voterKey) {
-              setServerVoterKey(data.voterKey);
+            if (data.voterKey) setServerVoterKey(data.voterKey);
+            if (data.voterCode) setVoterCode(data.voterCode);
+            if (data.token) {
+              setToken(data.token);
+              safeSetLocalStorage("voting_voter_token", data.token);
+              // Sync token to URL endpoint so it's visible in URL
+              try {
+                if (typeof window !== "undefined" && data.tokenValid !== false) {
+                  const currentUrl = new URL(window.location.href);
+                  if (currentUrl.searchParams.get("token") !== data.token) {
+                    currentUrl.searchParams.set("token", data.token);
+                    window.history.replaceState({}, "", currentUrl.toString());
+                  }
+                }
+              } catch (e) {}
             }
+            if (data.tokenValid !== undefined) setTokenValid(data.tokenValid);
+            if (data.tokenError) setTokenError(data.tokenError);
+
             if (Array.isArray(data.votedTeamIds)) {
               setVotedTeamIds(data.votedTeamIds);
             } else if (data.votedTeamId) {
@@ -241,6 +271,47 @@ export default function Home() {
             setIsHost(false);
             safeRemoveLocalStorage("voting_app_is_host");
             safeRemoveLocalStorage("voting_host_login_time");
+          }
+
+          // Real-time reset handler for voters: clear old tokens/code & obtain fresh code for new session
+          if (resetTimestamp > 0 && resetTimestamp !== lastResetTimestampRef.current) {
+            lastResetTimestampRef.current = resetTimestamp;
+
+            safeRemoveLocalStorage("voting_voter_token");
+            setToken("");
+            setVoterCode("");
+            setTokenValid(true);
+            setTokenError(null);
+            setVotedTeamIds([]);
+
+            try {
+              if (typeof window !== "undefined") {
+                const currentUrl = new URL(window.location.href);
+                if (currentUrl.searchParams.has("token")) {
+                  currentUrl.searchParams.delete("token");
+                  window.history.replaceState({}, "", currentUrl.toString());
+                }
+              }
+            } catch (e) {}
+
+            const fp = getDeviceFingerprint();
+            fetch(`/api/voting?voterId=${encodeURIComponent(voterId)}&fingerprint=${encodeURIComponent(fp)}`, { cache: "no-store" })
+              .then(res => res.json())
+              .then(resData => {
+                if (resData.voterCode) setVoterCode(resData.voterCode);
+                if (resData.token) {
+                  setToken(resData.token);
+                  safeSetLocalStorage("voting_voter_token", resData.token);
+                  try {
+                    if (typeof window !== "undefined") {
+                      const currentUrl = new URL(window.location.href);
+                      currentUrl.searchParams.set("token", resData.token);
+                      window.history.replaceState({}, "", currentUrl.toString());
+                    }
+                  } catch (e) {}
+                }
+              })
+              .catch(err => console.error("Error generating new code on reset:", err));
           }
           const votesMap = data.votes || {};
           const currentConfig = teamNamesConfig.length > 0 ? teamNamesConfig : ["Team 1", "Team 2", "Team 3", "Team 4"];
@@ -406,7 +477,7 @@ export default function Home() {
       const res = await fetch("/api/voting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teamId, voterId, fingerprint: fp })
+        body: JSON.stringify({ teamId, voterId, fingerprint: fp, token })
       });
 
       const data = await res.json();
@@ -507,7 +578,7 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col h-screen max-h-screen w-full bg-[#fcfefd] text-[#1e293b] font-sans antialiased overflow-hidden select-none relative">
+    <div className="flex flex-col min-h-screen w-full bg-[#fcfefd] text-[#1e293b] font-sans antialiased select-none relative overflow-y-auto">
       {/* Top green accent bar */}
       <div className="h-1 w-full bg-[#369d5c] shrink-0" />
 
@@ -520,13 +591,13 @@ export default function Home() {
       )}
 
       {/* Main viewport area */}
-      <main className="flex-1 flex flex-col justify-center items-center p-2 sm:p-4 md:p-6 overflow-hidden w-full max-w-2xl mx-auto">
+      <main className="flex-1 flex flex-col justify-center items-center p-1.5 sm:p-3 w-full max-w-lg mx-auto my-auto">
         
         {/* Core Container Card */}
-        <div className="w-full bg-white border border-[#e2e8f0] p-3 sm:p-5 md:p-8 shadow-sm rounded-[4px] flex flex-col overflow-hidden max-h-full">
+        <div className="w-full bg-white border border-[#e2e8f0] p-2.5 sm:p-3.5 shadow-sm rounded-[6px] flex flex-col gap-1.5 my-auto">
           
-          {/* HEADER (12px gap) */}
-          <div className="flex flex-col items-center gap-[12px] w-full text-center shrink-0">
+          {/* HEADER */}
+          <div className="flex flex-col items-center gap-1.5 w-full text-center shrink-0">
             
             {/* Event Hero Banner (Full Size - No Cropping) */}
             <div className="w-full relative rounded-[6px] overflow-hidden border border-slate-200/80 shadow-sm bg-slate-50 flex items-center justify-center shrink-0">
@@ -542,99 +613,132 @@ export default function Home() {
             </div>
 
             {/* Victory Text Banner */}
-            <div className="w-full max-w-sm px-3 sm:px-4 py-1.5 bg-[#f4faf6] border border-[#369d5c]/10 text-[#369d5c] font-semibold text-xs md:text-sm rounded-[4px] flex items-center justify-center gap-1.5 animate-pulse shrink-0">
-              <Trophy className="w-3.5 h-3.5 shrink-0 text-[#369d5c]" />
+            <div className="w-full max-w-xs px-2.5 py-0.5 bg-[#f4faf6] border border-[#369d5c]/10 text-[#369d5c] font-semibold text-[11px] sm:text-xs rounded-[4px] flex items-center justify-center gap-1 animate-pulse shrink-0">
+              <Trophy className="w-3 h-3 shrink-0 text-[#369d5c]" />
               <span className="tracking-wide text-center truncate">
                 {renderVictoryText()}
               </span>
             </div>
 
             {/* Title & Status indicator */}
-            <div className="flex flex-col items-center gap-[12px]">
-              {/* Timer Badge */}
-              {votingStarted && (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-[4px]">
-                  <Timer className={`w-3.5 h-3.5 ${timerRunning && timeLeft > 0 ? "text-[#369d5c] animate-spin-slow" : "text-slate-400"}`} />
-                  <span className="text-xs font-semibold tracking-wider font-mono text-slate-700">
+            {votingStarted && (
+              <div className="flex flex-col items-center gap-0.5">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-[4px]">
+                  <Timer className={`w-3 h-3 ${timerRunning && timeLeft > 0 ? "text-[#369d5c] animate-spin-slow" : "text-slate-400"}`} />
+                  <span className="text-[11px] font-semibold tracking-wider font-mono text-slate-700">
                     {timeLeft > 0 ? formatTime(timeLeft) : "Time's up"}
                   </span>
                   <span className={`inline-block w-1.5 h-1.5 rounded-full ${timeLeft > 0 ? (timerRunning ? "bg-[#369d5c] animate-ping" : "bg-amber-400") : "bg-rose-500"}`} />
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
           </div>
 
-          {/* SPACING: 20px - 32px gap between header and content card area */}
-          <div className="mt-4 sm:mt-[32px] flex-1 flex flex-col gap-[12px] overflow-hidden">
+          {/* SPACING: Content Area */}
+          <div className="mt-1 flex-1 flex flex-col gap-1.5">
             
             {loading ? (
-              <div className="flex-1 flex justify-center items-center py-8">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#369d5c]"></div>
+              <div className="flex-1 flex justify-center items-center py-4">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[#369d5c]"></div>
               </div>
             ) : !votingStarted ? (
               
               /* CASE 1: Voting NOT STARTED Yet */
-              <div className="flex-1 flex flex-col justify-center items-center text-center p-2 sm:p-4 gap-[12px]">
+              <div className="flex-1 flex flex-col justify-center items-center text-center p-1 gap-1.5">
                 
                 {isHost ? (
                   /* Host waiting view */
-                  <div className="flex flex-col items-center gap-[12px] max-w-sm">
-                    <div className="w-12 h-12 bg-[#369d5c]/10 text-[#369d5c] rounded-[4px] flex items-center justify-center">
-                      <Settings className="w-6 h-6 animate-pulse" />
+                  <div className="flex flex-col items-center gap-1.5 max-w-xs">
+                    <div className="w-8 h-8 bg-[#369d5c]/10 text-[#369d5c] rounded-[4px] flex items-center justify-center">
+                      <Settings className="w-4 h-4 animate-pulse" />
                     </div>
-                    <div className="flex flex-col gap-[6px]">
-                      <h2 className="font-bold text-slate-800 text-base">Start Voting Session</h2>
-                      <p className="text-xs text-slate-500">Click the button below to activate the voting system.</p>
+                    <div className="flex flex-col gap-0.5">
+                      <h2 className="font-bold text-slate-800 text-xs sm:text-sm">Start Voting Session</h2>
+                      <p className="text-[10px] text-slate-500">Click the button below to activate the voting system.</p>
                     </div>
                     <button
                       onClick={() => sendHostAction("START", { durationSeconds: duration })}
-                      className="w-full mt-2 py-2.5 px-4 bg-[#369d5c] hover:bg-[#2c854e] text-white font-bold text-sm rounded-[4px] transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer"
+                      className="w-full mt-1 py-1.5 px-3 bg-[#369d5c] hover:bg-[#2c854e] text-white font-bold text-xs rounded-[4px] transition-all flex items-center justify-center gap-1 shadow-sm active:scale-98 cursor-pointer"
                     >
-                      <Play className="w-4 h-4 fill-white" /> Start Voting
+                      <Play className="w-3 h-3 fill-white" /> Start Voting
                     </button>
                   </div>
                 ) : (
                   /* Employee waiting view */
-                  <div className="flex flex-col items-center gap-[12px] max-w-sm">
-                    <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-[4px] border border-slate-100 flex items-center justify-center animate-bounce">
-                      <Users className="w-6 h-6" />
-                    </div>
-                    <div className="flex flex-col gap-[6px]">
-                      <h2 className="font-bold text-slate-700 text-sm md:text-base">Voting Session Coming Up</h2>
-                      <p className="text-xs text-slate-400">Please wait for the host to start the voting session.</p>
-                    </div>
-                    <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-amber-50 text-amber-600 border border-amber-100 text-[10px] font-bold rounded-[4px] uppercase animate-pulse">
-                      Waiting to Begin
-                    </span>
+                  <div className="flex flex-col items-center gap-1.5 w-full max-w-xs">
+                    {!tokenValid ? (
+                      /* Security violation when copying URL to another device */
+                      <div className="w-full p-2 bg-rose-50 border border-rose-200 rounded-[6px] text-center flex flex-col items-center gap-1 text-rose-700 shadow-sm animate-pulse">
+                        <AlertCircle className="w-6 h-6 text-rose-500 shrink-0" />
+                        <div className="flex flex-col gap-0.5">
+                          <h3 className="font-bold text-[11px]">Từ Chối Truy Cập (Security Violation)</h3>
+                          <p className="text-[10px] text-rose-600 leading-snug">
+                            {tokenError || "Mã Token/Link này được tạo từ một thiết bị khác. Bạn không thể sử dụng link copy để bình chọn!"}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="w-8 h-8 bg-slate-50 text-slate-400 rounded-[4px] border border-slate-100 flex items-center justify-center animate-bounce">
+                          <Users className="w-4 h-4" />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <h2 className="font-bold text-slate-700 text-xs">Voting Session Coming Up</h2>
+                          <p className="text-[10px] text-slate-400">Please wait for the host to start the voting session.</p>
+                        </div>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 border border-amber-100 text-[9px] font-bold rounded-[4px] uppercase animate-pulse">
+                          Waiting to Begin
+                        </span>
+
+                        {/* 6-Digit Code Badge for Voter */}
+                        {voterCode && (
+                          <div className="w-full mt-0.5 p-2 bg-slate-900 border border-emerald-500/30 rounded-[6px] text-center shadow-md text-white flex flex-col items-center gap-1">
+                            <div className="flex items-center gap-1 text-emerald-400 text-[9px] font-bold uppercase tracking-wider">
+                              <Lock className="w-3 h-3" /> Mã Định Danh Người Vote
+                            </div>
+                            <div className="flex items-center justify-center gap-1 my-0.5">
+                              {voterCode.split("").map((digit, idx) => (
+                                <span key={idx} className="w-6 h-8 flex items-center justify-center text-base font-mono font-extrabold bg-slate-950 border border-emerald-500/40 text-emerald-300 rounded-[4px] shadow-inner">
+                                  {digit}
+                                </span>
+                              ))}
+                            </div>
+                            <p className="text-[8px] sm:text-[9px] text-slate-300 font-medium">
+                              Mã định danh 6 số gắn liền với thiết bị & IP của bạn. Token đã được xác thực an toàn.
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
                 
                 {/* Host authentication login form inside waiting page */}
                 {!isHost && (
-                  <form onSubmit={handleHostLogin} className="w-full max-w-xs mt-6 pt-4 border-t border-slate-100 flex flex-col gap-[6px]">
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                  <form onSubmit={handleHostLogin} className="w-full max-w-[240px] mt-2 pt-1.5 border-t border-slate-100 flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between text-[9px] text-slate-400 font-medium">
                       <span>Host access:</span>
                       {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
                     </div>
-                    <div className="flex items-center gap-[6px]">
+                    <div className="flex items-center gap-1">
                       <div className="relative flex-1 flex items-center">
-                        <div className="absolute left-2.5 inset-y-0 flex items-center pointer-events-none text-slate-400">
-                          <Lock className="w-3.5 h-3.5 shrink-0" />
+                        <div className="absolute left-2 inset-y-0 flex items-center pointer-events-none text-slate-400">
+                          <Lock className="w-3 h-3 shrink-0" />
                         </div>
                         <input
                           type="password"
                           value={passwordInput}
                           onChange={(e) => setPasswordInput(e.target.value)}
                           placeholder="Password..."
-                          className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
+                          className="w-full pl-6 pr-2 py-0.5 bg-slate-50 border border-slate-200 rounded-[4px] text-[11px] focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
                         />
                       </div>
                       <button
                         type="submit"
-                        className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
+                        className="p-1 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
                       >
-                        <ArrowRight className="w-4 h-4" />
+                        <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>
                   </form>
