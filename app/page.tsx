@@ -79,14 +79,11 @@ function getDeviceFingerprint(): string {
       }
     } catch (e) {}
 
+    // Only use structural hardware properties that are guaranteed to match
+    // across all Webviews/browsers on the same device.
     const components = [
-      nav.language || "",
-      screen.colorDepth || 0,
-      screen.width ? screen.width + "x" + screen.height : "",
-      screen.availWidth ? screen.availWidth + "x" + screen.availHeight : "",
-      new Date().getTimezoneOffset(),
+      screen.width && screen.height ? screen.width + "x" + screen.height : "",
       nav.hardwareConcurrency || 0,
-      (nav as any).deviceMemory || 0,
       gpu
     ];
     
