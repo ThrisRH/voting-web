@@ -513,7 +513,6 @@ export default function Home() {
       const config = await res.json();
       
       const appId = config.appId;
-      const callbackUrl = config.callbackUrl;
       const state = Math.random().toString(36).substring(7);
 
       if (!appId) {
@@ -521,8 +520,19 @@ export default function Home() {
         return;
       }
 
-      // Redirect to Zalo authorization page
-      window.location.href = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`;
+      // Dynamically derive callback URL based on current origin to prevent mismatch
+      const callbackUrl = `${window.location.origin}/api/auth/zalo/callback`;
+
+      // Generate PKCE code verifier and challenge
+      const codeVerifier = generateRandomString(43);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+      // Save code verifier in a temporary cookie so backend callback can fetch it
+      document.cookie = `zalo_code_verifier=${encodeURIComponent(codeVerifier)}; Path=/; Max-Age=300; SameSite=Lax`;
+
+      // Redirect to Zalo authorization page with PKCE challenge parameter
+      const targetUrl = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${codeChallenge}&state=${state}`;
+      window.location.href = targetUrl;
     } catch (e) {
       console.error(e);
       alert("Không thể kết nối đến máy chủ để lấy cấu hình đăng nhập Zalo!");
