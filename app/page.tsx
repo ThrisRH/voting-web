@@ -407,9 +407,20 @@ export default function Home() {
       return "Victory: (could be your team)";
     }
     
-    const winner = getWinner();
-    if (!winner || totalVotes === 0) {
+    if (totalVotes === 0) {
       return "No votes cast";
+    }
+
+    const winner = getWinner();
+    if (!winner) return "No votes cast";
+
+    // Check for tie: find all teams with the same max vote count
+    const maxVotes = winner.votes;
+    const tiedTeams = teams.filter(t => t.votes === maxVotes && maxVotes > 0);
+
+    if (tiedTeams.length > 1) {
+      const names = tiedTeams.map(t => t.name).join(" & ");
+      return `🤝 Hòa: ${names}`;
     }
 
     return `Victory: ${winner.name}`;
