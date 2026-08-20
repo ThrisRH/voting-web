@@ -225,15 +225,8 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-  const sanitizedFp = fingerprint ? fingerprint.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
   const voterKey = getVoterKey(req, voterId, fingerprint);
-  
-  const compositeVotes = store.votedDevices && voterKey ? getVotedList(store.votedDevices[voterKey]) : [];
-  const deviceVotes = store.votedDevices && sanitizedVoterId ? getVotedList(store.votedDevices[sanitizedVoterId]) : [];
-  const fpVotes = store.votedDevices && sanitizedFp ? getVotedList(store.votedDevices[`fp_${sanitizedFp}`]) : [];
-  
-  const votedTeamIds = Array.from(new Set([...compositeVotes, ...deviceVotes, ...fpVotes]));
+  const votedTeamIds = store.votedDevices && voterKey ? getVotedList(store.votedDevices[voterKey]) : [];
 
   return NextResponse.json({
     title: store.title,
@@ -274,12 +267,8 @@ export async function POST(req: NextRequest) {
       const session = sessionSnap.data() as SessionState;
       const votedDevices = session.votedDevices || {};
 
-      // Read existing votes for ALL possible keys for this voter (composite + voterId + fp)
-      const sanitizedFp = fingerprint ? fingerprint.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-      const fpKey = sanitizedFp ? `fp_${sanitizedFp}` : "";
-      const allVoterKeys = Array.from(new Set([voterKey, sanitizedVoterId, fpKey].filter(Boolean)));
-      const allExistingVotes = allVoterKeys.flatMap(k => getVotedList(votedDevices[k]));
-      const combinedVotes = Array.from(new Set(allExistingVotes));
+      // Read existing votes for voterKey
+      const combinedVotes = getVotedList(votedDevices[voterKey]);
 
       if (!session.votingStarted) {
         return { error: "Voting has not started yet!" };
@@ -321,12 +310,6 @@ export async function POST(req: NextRequest) {
       const updatedVotedDevices = { ...votedDevices };
       if (voterKey) {
         updatedVotedDevices[voterKey] = newVoteList;
-      }
-      if (sanitizedVoterId) {
-        updatedVotedDevices[sanitizedVoterId] = newVoteList;
-      }
-      if (sanitizedFp) {
-        updatedVotedDevices[`fp_${sanitizedFp}`] = newVoteList;
       }
 
       // Perform database updates
