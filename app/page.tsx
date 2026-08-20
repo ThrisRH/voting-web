@@ -472,18 +472,27 @@ export default function Home() {
     return `Victory: ${winner.name}`;
   };
 
-  const handleZaloLogin = () => {
-    const appId = process.env.APP_ID || "";
-    const callbackUrl = process.env.URL || "";
-    const state = Math.random().toString(36).substring(7);
+  const handleZaloLogin = async () => {
+    try {
+      // Fetch configurations from backend API to bypass NEXT_PUBLIC_ restriction
+      const res = await fetch("/api/config");
+      const config = await res.json();
+      
+      const appId = config.appId;
+      const callbackUrl = config.callbackUrl;
+      const state = Math.random().toString(36).substring(7);
 
-    if (!appId) {
-      alert("Chưa cấu hình Zalo App ID! Vui lòng thiết lập trong file .env");
-      return;
+      if (!appId) {
+        alert("Chưa cấu hình Zalo APP_ID! Vui lòng kiểm tra lại cấu hình Biến môi trường trên Vercel.");
+        return;
+      }
+
+      // Redirect to Zalo authorization page
+      window.location.href = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`;
+    } catch (e) {
+      console.error(e);
+      alert("Không thể kết nối đến máy chủ để lấy cấu hình đăng nhập Zalo!");
     }
-
-    // Redirect to Zalo authorization page
-    window.location.href = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`;
   };
 
   const handleSignOut = () => {
