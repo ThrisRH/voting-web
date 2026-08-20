@@ -14,7 +14,8 @@ import {
   Lock,
   ArrowRight,
   Users,
-  AlertCircle
+  AlertCircle,
+  LogOut
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { db } from "../lib/firebase";
@@ -604,29 +605,13 @@ export default function Home() {
 
       {/* FLOATING ACTION TOOLBAR */}
       <div className="fixed bottom-4 right-4 flex items-center gap-2 z-40">
-        
         {isHost && (
           <button
             onClick={() => setIsAdminOpen(true)}
             className="p-2 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
           >
             <Settings className="w-3.5 h-3.5" />
-            <span>Host</span>
-          </button>
-        )}
-
-        {isHost && (
-          <button
-            onClick={() => {
-              setIsHost(false);
-              setIsAdminOpen(false);
-              localStorage.removeItem("voting_app_is_host");
-            }}
-            className="p-2 bg-rose-600 text-white rounded-[4px] hover:bg-rose-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1 text-xs font-semibold"
-            title="Exit host mode"
-          >
-            <X className="w-3.5 h-3.5" />
-            <span>Exit</span>
+            <span>Host Panel</span>
           </button>
         )}
       </div>
@@ -727,33 +712,10 @@ export default function Home() {
               </div>
             )}
 
-            {/* Vote Management Block */}
-            <div className="flex flex-col gap-[6px] mt-1">
-              <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Voting Settings</h3>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button 
-                  onClick={() => sendHostAction("RESET_VOTES")}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm"
-                  title="Reset all votes and unlock voting for all devices"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Reset Round
-                </button>
-                <button 
-                  onClick={() => {
-                    localStorage.clear();
-                    window.location.reload();
-                  }}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-[4px] cursor-pointer"
-                >
-                  Clear Browser Cache
-                </button>
-              </div>
-            </div>
-
             {/* Description Text */}
             <div className="p-3 bg-slate-50 border border-slate-100 text-slate-500 text-[11px] rounded-[4px] leading-relaxed mt-2">
-              <p className="font-bold text-slate-700 mb-0.5">How voting works:</p>
-              Each device is automatically tracked to ensure fairness. Even after reloading the page or clearing browser cache, the device cannot vote again unless the host clicks <strong>&quot;Reset Round&quot;</strong> above.
+              <p className="font-bold text-slate-700 mb-0.5">Host Panel:</p>
+              Use Session Status to activate or end voting, and Timer Management to control the countdown timer in real-time.
             </div>
 
           </div>
