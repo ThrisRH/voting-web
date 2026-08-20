@@ -8,9 +8,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing authorization code" }, { status: 400 });
   }
 
-  const appId = process.env.NEXT_PUBLIC_ZALO_APP_ID || "";
-  const appSecret = process.env.ZALO_APP_SECRET || "";
-  const callbackUrl = process.env.NEXT_PUBLIC_ZALO_CALLBACK_URL || "";
+  const appId = process.env.APP_ID || "";
+  const appSecret = process.env.SECRET || "";
+  const callbackUrl = process.env.URL || "";
 
   try {
     // 1. Exchange authorization code for access token

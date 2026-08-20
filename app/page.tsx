@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { 
-  Trophy, 
-  Timer, 
-  Check, 
-  Play, 
-  Pause, 
-  Settings, 
+import {
+  Trophy,
+  Timer,
+  Check,
+  Play,
+  Pause,
+  Settings,
   X,
   Award,
   Lock,
@@ -93,7 +93,7 @@ export default function Home() {
   const [zaloUser, setZaloUser] = useState<ZaloUser | null>(null);
   const [pendingTeamId, setPendingTeamId] = useState<string | null>(null);
   const pendingTeamIdRef = useRef<string | null>(null);
-  
+
   // Timer States
   const [timeLeft, setTimeLeft] = useState<number>(300);
   const [timerRunning, setTimerRunning] = useState<boolean>(false);
@@ -193,9 +193,9 @@ export default function Home() {
     if (loading) return;
 
     const docRef = doc(db, "sessions", "voting_session");
-    
+
     const unsubscribe = onSnapshot(
-      docRef, 
+      docRef,
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
@@ -203,7 +203,7 @@ export default function Home() {
           setTimerRunning(data.timerRunning || false);
           setEndTime(data.endTime || null);
           setPausedTimeLeft(data.pausedTimeLeft !== undefined ? data.pausedTimeLeft : duration);
-          
+
           const resetTimestamp = data.resetTimestamp || 0;
           const hostLoginTime = parseInt(safeGetLocalStorage("voting_host_login_time") || "0", 10);
           if (resetTimestamp > 0 && (hostLoginTime === 0 || resetTimestamp >= hostLoginTime)) {
@@ -211,7 +211,7 @@ export default function Home() {
             safeRemoveLocalStorage("voting_app_is_host");
             safeRemoveLocalStorage("voting_host_login_time");
           }
-          
+
           const votesMap = data.votes || {};
           const currentConfig = teamNamesConfig.length > 0 ? teamNamesConfig : ["Team 1", "Team 2", "Team 3", "Team 4"];
           const updatedTeams = currentConfig.map((name, idx) => {
@@ -222,9 +222,9 @@ export default function Home() {
               votes: votesMap[id] || 0
             };
           });
-          
+
           setTeams(updatedTeams);
-          
+
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
@@ -258,9 +258,9 @@ export default function Home() {
     const interval = setInterval(() => {
       const now = Date.now();
       const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
-      
+
       setTimeLeft(remaining);
-      
+
       if (remaining === 0) {
         setTimeLeft(0);
         setTimerRunning(false);
@@ -317,7 +317,7 @@ export default function Home() {
 
       const particleCount = 50 * (remainingTime / animationDuration);
       const colors = ["#369d5c", "#5bc183", "#23723f", "#a7f3d0", "#ffffff"];
-      
+
       confetti({
         ...defaults,
         particleCount,
@@ -377,7 +377,7 @@ export default function Home() {
       });
 
       const data = await res.json();
-      
+
       if (!res.ok) {
         // Revert optimistic update on failure
         setVotedTeamIds(previousVotedIds);
@@ -449,11 +449,11 @@ export default function Home() {
     if (!isHost) {
       return "Victory: (could be your team)";
     }
-    
+
     if (!votingStarted || timeLeft > 0) {
       return "Victory: (could be your team)";
     }
-    
+
     if (totalVotes === 0) {
       return "No votes cast";
     }
@@ -473,15 +473,15 @@ export default function Home() {
   };
 
   const handleZaloLogin = () => {
-    const appId = process.env.NEXT_PUBLIC_ZALO_APP_ID || "";
-    const callbackUrl = process.env.NEXT_PUBLIC_ZALO_CALLBACK_URL || "";
+    const appId = process.env.APP_ID || "";
+    const callbackUrl = process.env.URL || "";
     const state = Math.random().toString(36).substring(7);
-    
+
     if (!appId) {
       alert("Chưa cấu hình Zalo App ID! Vui lòng thiết lập trong file .env");
       return;
     }
-    
+
     // Redirect to Zalo authorization page
     window.location.href = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`;
   };
@@ -507,13 +507,13 @@ export default function Home() {
 
       {/* Main viewport area */}
       <main className="flex-1 flex flex-col justify-center items-center p-2 sm:p-4 md:p-6 overflow-hidden w-full max-w-2xl mx-auto">
-        
+
         {/* Core Container Card */}
         <div className="w-full bg-white border border-[#e2e8f0] p-3 sm:p-5 md:p-8 shadow-sm rounded-[4px] flex flex-col overflow-hidden max-h-full">
-          
+
           {/* HEADER */}
           <div className="flex flex-col items-center gap-[12px] w-full text-center shrink-0">
-            
+
             {/* Event Hero Banner */}
             <div className="w-full relative rounded-[6px] overflow-hidden border border-slate-200/80 shadow-sm bg-slate-50 flex items-center justify-center shrink-0">
               <img
@@ -551,19 +551,19 @@ export default function Home() {
           </div>
 
           <div className="mt-4 sm:mt-[32px] flex-1 flex flex-col gap-[12px] overflow-hidden">
-            
+
             {loading ? (
               <div className="flex-1 flex justify-center items-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#369d5c]"></div>
               </div>
             ) : !zaloUser && !isHost ? (
-              
+
               /* CASE 0: USER NOT LOGGED IN YET (ZALO BLOCKER) */
               <div className="flex-1 flex flex-col justify-center items-center text-center p-4 gap-6">
                 <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center border border-blue-100">
                   <Users className="w-8 h-8 text-blue-500" />
                 </div>
-                
+
                 <div className="flex flex-col gap-2 max-w-sm">
                   <h2 className="font-bold text-slate-800 text-lg">Đăng Nhập Zalo</h2>
                   <p className="text-xs text-slate-500 leading-relaxed px-4">
@@ -575,7 +575,7 @@ export default function Home() {
                   onClick={handleZaloLogin}
                   className="w-full max-w-xs py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-[4px] shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
                 >
-                  <img src="/vote.png" alt="Zalo Logo" className="w-5 h-5 object-contain invert brightness-200" onError={(e) => e.currentTarget.style.display="none"} />
+                  <img src="/vote.png" alt="Zalo Logo" className="w-5 h-5 object-contain invert brightness-200" onError={(e) => e.currentTarget.style.display = "none"} />
                   Đăng Nhập Bằng Zalo
                 </button>
 
@@ -609,10 +609,10 @@ export default function Home() {
               </div>
 
             ) : !votingStarted ? (
-              
+
               /* CASE 1: Voting NOT STARTED Yet */
               <div className="flex-1 flex flex-col justify-center items-center text-center p-2 sm:p-4 gap-[12px]">
-                
+
                 {isHost ? (
                   <div className="flex flex-col items-center gap-[12px] max-w-sm">
                     <div className="w-12 h-12 bg-[#369d5c]/10 text-[#369d5c] rounded-[4px] flex items-center justify-center">
@@ -657,14 +657,14 @@ export default function Home() {
                     </span>
                   </div>
                 )}
-                
+
               </div>
 
             ) : (
-              
+
               /* CASE 2: Voting ACTIVE / STARTED */
               <div className="flex-1 flex flex-col gap-[12px] overflow-hidden">
-                
+
                 {/* User Info & Signout in active mode */}
                 {!isHost && zaloUser && (
                   <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-1 shrink-0">
@@ -694,7 +694,7 @@ export default function Home() {
                       const isPending = pendingTeamId === team.id;
                       const percentage = getPercentage(team.votes);
                       const displayPercentage = percentage > 0 ? `${percentage}%` : "0%";
-                      
+
                       const showResults = isHost || timeLeft === 0;
 
                       return (
@@ -703,8 +703,8 @@ export default function Home() {
                             onClick={() => handleVote(team.id)}
                             disabled={isHost || timeLeft === 0 || isPending}
                             className={`w-full text-left p-3.5 border rounded-[4px] relative overflow-hidden transition-all flex items-center justify-between gap-4 leading-normal select-none
-                              ${isVoted 
-                                ? "bg-[#369d5c]/5 border-[#369d5c] shadow-sm text-slate-900" 
+                              ${isVoted
+                                ? "bg-[#369d5c]/5 border-[#369d5c] shadow-sm text-slate-900"
                                 : "bg-white border-[#e2e8f0] text-slate-700 hover:border-slate-300 hover:bg-slate-50/50"
                               }
                               ${(isHost || timeLeft === 0) ? "cursor-default" : "cursor-pointer active:scale-[0.99]"}
@@ -712,8 +712,8 @@ export default function Home() {
                           >
                             <div className="flex items-center gap-2.5 z-10 min-w-0 flex-1">
                               <div className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center shrink-0 transition-colors
-                                ${isVoted 
-                                  ? "bg-[#369d5c] border-[#369d5c] text-white" 
+                                ${isVoted
+                                  ? "bg-[#369d5c] border-[#369d5c] text-white"
                                   : "border-slate-300 bg-white"
                                 }
                               `}>
@@ -736,8 +736,8 @@ export default function Home() {
                             )}
 
                             {showResults && (
-                              <div 
-                                className="absolute inset-y-0 left-0 bg-[#369d5c]/10 transition-all duration-500 ease-out z-0" 
+                              <div
+                                className="absolute inset-y-0 left-0 bg-[#369d5c]/10 transition-all duration-500 ease-out z-0"
                                 style={{ width: `${percentage}%` }}
                               />
                             )}
@@ -769,7 +769,7 @@ export default function Home() {
             <h2 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
               <Settings className="w-4 h-4 text-[#369d5c]" /> Admin Control Panel
             </h2>
-            <button 
+            <button
               onClick={() => setIsAdminOpen(false)}
               className="p-1 hover:bg-slate-100 rounded-[4px] cursor-pointer text-slate-400 hover:text-slate-600 transition-colors"
             >
@@ -783,14 +783,14 @@ export default function Home() {
               <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Session Status</h3>
               <div className="flex items-center gap-2">
                 {votingStarted ? (
-                  <button 
+                  <button
                     onClick={() => sendHostAction("RESET_ALL")}
                     className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
                     <X className="w-3 h-3" /> End Voting & Sign Out
                   </button>
                 ) : (
-                  <button 
+                  <button
                     onClick={() => sendHostAction("START", { durationSeconds: duration })}
                     className="px-3 py-1.5 bg-[#369d5c] hover:bg-[#2c854e] text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
@@ -805,7 +805,7 @@ export default function Home() {
               <div className="flex flex-col gap-[6px] mt-1">
                 <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Timer Management</h3>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button 
+                  <button
                     onClick={() => sendHostAction("TOGGLE_TIMER")}
                     className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
@@ -815,36 +815,36 @@ export default function Home() {
                       <><Play className="w-3 h-3" /> Resume</>
                     )}
                   </button>
-                  <button 
+                  <button
                     onClick={() => sendHostAction("ADJUST_TIMER", { seconds: 60 })}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     + 1 min
                   </button>
-                  <button 
+                  <button
                     onClick={() => sendHostAction("ADJUST_TIMER", { seconds: -60 })}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     - 1 min
                   </button>
-                  <button 
+                  <button
                     onClick={() => sendHostAction("END_NOW")}
                     className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 font-semibold text-xs rounded-[4px] cursor-pointer"
                   >
                     End Now (0s)
                   </button>
                 </div>
-                
+
                 <div className="flex items-center gap-1.5 mt-1">
                   <span className="text-slate-500 text-xs font-medium">Reset timer:</span>
                   {[60, 300, 600].map(s => (
-                    <button 
+                    <button
                       key={s}
                       onClick={() => sendHostAction("START", { durationSeconds: s })}
                       className="px-2 py-1 bg-[#369d5c]/10 text-[#369d5c] font-semibold text-xs rounded-[4px] hover:bg-[#369d5c]/20 cursor-pointer"
                     >
                       {s / 60} min
-                  </button>
+                    </button>
                   ))}
                 </div>
               </div>
