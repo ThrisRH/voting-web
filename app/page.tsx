@@ -29,6 +29,33 @@ interface Team {
 
 const ADMIN_PASSWORD = "123456";
 
+// Helper to get device fingerprint
+function getDeviceFingerprint(): string {
+  if (typeof window === "undefined") return "";
+  const nav = window.navigator;
+  const screen = window.screen;
+  
+  const components = [
+    nav.userAgent || "",
+    nav.language || "",
+    screen.colorDepth || 0,
+    screen.width + "x" + screen.height,
+    screen.availWidth + "x" + screen.availHeight,
+    new Date().getTimezoneOffset(),
+    nav.hardwareConcurrency || 0,
+    nav.platform || ""
+  ];
+  
+  let hash = 0;
+  const str = components.join("||");
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return "fp_" + Math.abs(hash).toString(36);
+}
+
 export default function Home() {
   // Data States
   const [duration, setDuration] = useState<number>(300);
@@ -37,6 +64,8 @@ export default function Home() {
   const [totalVotes, setTotalVotes] = useState<number>(0);
   const [clientIp, setClientIp] = useState<string>("");
   const [voterId, setVoterId] = useState<string>("");
+  const [pendingTeamId, setPendingTeamId] = useState<string | null>(null);
+  const pendingTeamIdRef = useRef<string | null>(null);
   
   // Timer States
   const [timeLeft, setTimeLeft] = useState<number>(300);
@@ -73,8 +102,9 @@ export default function Home() {
 
     async function initializeClient() {
       try {
+        const fp = getDeviceFingerprint();
         // 1. Fetch IP & voted status from API
-        const statusRes = await fetch(`/api/voting?voterId=${encodeURIComponent(voterId)}`);
+        const statusRes = await fetch(`/api/voting?voterId=${encodeURIComponent(voterId)}&fingerprint=${encodeURIComponent(fp)}`);
         if (statusRes.ok) {
           const data = await statusRes.json();
           setClientIp(data.clientIp || "127.0.0.1");
@@ -141,11 +171,14 @@ export default function Home() {
           const total = updatedTeams.reduce((sum, team) => sum + team.votes, 0);
           setTotalVotes(total);
 
-          // Update votedTeamIds based on our voterId or clientIp inside votedDevices / votedIps map
+          // Update votedTeamIds based on composite key (IP + fingerprint) or voterId
           const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
           const sanitizedIp = clientIp ? clientIp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+          const fp = getDeviceFingerprint();
+          const sanitizedFp = fp ? fp.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+          
+          const voterKey = `ip_${sanitizedIp}_fp_${sanitizedFp}`;
           const votedDevicesMap = data.votedDevices || {};
-          const votedIpsMap = data.votedIps || {};
 
           const getVotedList = (val: any): string[] => {
             if (!val) return [];
@@ -154,11 +187,13 @@ export default function Home() {
             return [];
           };
 
+          const compositeVotes = voterKey ? getVotedList(votedDevicesMap[voterKey]) : [];
           const deviceVotes = sanitizedVoterId ? getVotedList(votedDevicesMap[sanitizedVoterId]) : [];
-          const ipVotes = sanitizedIp ? getVotedList(votedIpsMap[sanitizedIp]) : [];
-          const currentVotedIds = Array.from(new Set([...deviceVotes, ...ipVotes]));
+          const currentVotedIds = Array.from(new Set([...compositeVotes, ...deviceVotes]));
 
-          setVotedTeamIds(currentVotedIds);
+          if (!pendingTeamIdRef.current) {
+            setVotedTeamIds(currentVotedIds);
+          }
         }
       },
       (error) => {
@@ -260,22 +295,39 @@ export default function Home() {
     });
   };
 
-  // Submit Vote through secure API to check device ID & IP limits
+  // Submit Vote through secure API to check device ID & IP limits (Supports Toggle / Unvote)
   const handleVote = async (teamId: string) => {
     if (isHost || !votingStarted || timeLeft === 0) return;
-    if (votedTeamIds.includes(teamId) || votedTeamIds.length >= 2) return;
     if (!voterId) return;
+    if (pendingTeamIdRef.current) return; // Prevent rapid double clicking
 
-    // Optimistic Update (Immediate visual response & confetti)
+    const isAlreadyVoted = votedTeamIds.includes(teamId);
+    if (!isAlreadyVoted && votedTeamIds.length >= 2) {
+      setErrorMessage("Bạn đã sử dụng tối đa 2 lượt bình chọn! Vui lòng bỏ chọn một đội trước khi chọn đội mới.");
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
+
+    setPendingTeamId(teamId);
+    pendingTeamIdRef.current = teamId;
+
+    // Optimistic Update (Immediate visual response)
     const previousVotedIds = [...votedTeamIds];
-    setVotedTeamIds(prev => [...prev, teamId]);
-    triggerVoteConfetti();
+    let nextVotedIds: string[];
+    if (isAlreadyVoted) {
+      nextVotedIds = votedTeamIds.filter(id => id !== teamId);
+    } else {
+      nextVotedIds = [...votedTeamIds, teamId];
+      triggerVoteConfetti();
+    }
+    setVotedTeamIds(nextVotedIds);
 
     try {
+      const fp = getDeviceFingerprint();
       const res = await fetch("/api/voting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teamId, voterId })
+        body: JSON.stringify({ teamId, voterId, fingerprint: fp })
       });
 
       const data = await res.json();
@@ -285,7 +337,7 @@ export default function Home() {
         setVotedTeamIds(previousVotedIds);
         setErrorMessage(data.error || "Có lỗi xảy ra!");
         setTimeout(() => setErrorMessage(null), 5000);
-      } else if (data.votedTeamIds) {
+      } else if (Array.isArray(data.votedTeamIds)) {
         setVotedTeamIds(data.votedTeamIds);
       }
     } catch (err) {
@@ -294,6 +346,9 @@ export default function Home() {
       setVotedTeamIds(previousVotedIds);
       setErrorMessage("Không thể kết nối đến máy chủ!");
       setTimeout(() => setErrorMessage(null), 5000);
+    } finally {
+      setPendingTeamId(null);
+      pendingTeamIdRef.current = null;
     }
   };
 
@@ -518,7 +573,8 @@ export default function Home() {
                     const isLeading = timeLeft === 0 && getWinner()?.id === team.id && totalVotes > 0;
                     const isUserSelection = votedTeamIds.includes(team.id);
                     const isMaxVotesReached = votedTeamIds.length >= 2;
-                    const isButtonDisabled = isHost || timeLeft === 0 || isUserSelection || isMaxVotesReached;
+                    const isPendingThisTeam = pendingTeamId === team.id;
+                    const isButtonDisabled = isHost || timeLeft === 0 || !!pendingTeamId || (!isUserSelection && isMaxVotesReached);
                     
                     return (
                       <div 
@@ -557,7 +613,7 @@ export default function Home() {
                           </div>
                         )}
 
-                        {/* Right: Checkmark Button */}
+                        {/* Right: Checkmark / Unvote Button */}
                         <button
                           onClick={() => handleVote(team.id)}
                           disabled={isButtonDisabled}
@@ -565,7 +621,7 @@ export default function Home() {
                             isHost || timeLeft === 0
                               ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
                               : isUserSelection
-                                ? "bg-[#369d5c] border-[#369d5c] text-white cursor-default shadow-sm"
+                                ? "bg-[#369d5c] border-[#369d5c] text-white cursor-pointer shadow-sm hover:bg-rose-600 hover:border-rose-600 active:scale-95"
                                 : isMaxVotesReached
                                   ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
                                   : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95 cursor-pointer"
@@ -574,13 +630,17 @@ export default function Home() {
                             isHost 
                               ? "Host không thể bình chọn" 
                               : isUserSelection 
-                                ? "Đã bình chọn cho đội này" 
+                                ? "Nhấp để bỏ chọn đội này" 
                                 : isMaxVotesReached 
-                                  ? "Đã dùng hết 2 lượt bình chọn" 
+                                  ? "Đã chọn đủ 2 lượt (Nhấp vào đội đã chọn để bỏ chọn)" 
                                   : "Bình chọn cho đội này"
                           }
                         >
-                          <Check className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
+                          {isPendingThisTeam ? (
+                            <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Check className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
+                          )}
                         </button>
 
                       </div>

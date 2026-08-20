@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import DeviceDetector from "device-detector-js";
 import { db } from "../../../lib/firebase";
 import { 
   doc, 
@@ -136,12 +137,56 @@ async function getSessionDoc(): Promise<SessionState> {
   }
 }
 
+const deviceDetector = new DeviceDetector();
+
+// Helper to get composite voter key (IP + User-Agent parsed device + fingerprint / voterId)
+function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): string {
+  const ip = getClientIp(req);
+  const userAgent = req.headers.get("user-agent") || "";
+  
+  let deviceSignature = "";
+  try {
+    if (userAgent) {
+      const parsed = deviceDetector.parse(userAgent);
+      const osName = parsed.os?.name || "";
+      const osVer = parsed.os?.version || "";
+      const deviceType = parsed.device?.type || "";
+      const deviceBrand = parsed.device?.brand || "";
+      const deviceModel = parsed.device?.model || "";
+      const clientName = parsed.client?.name || "";
+      
+      const sig = `${osName}_${osVer}_${deviceType}_${deviceBrand}_${deviceModel}_${clientName}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+      if (sig && sig !== "_____") {
+        deviceSignature = sig;
+      }
+    }
+  } catch (e) {
+    console.error("DeviceDetector error:", e);
+  }
+
+  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "127_0_0_1";
+  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  const sanitizedFp = fingerprint ? fingerprint.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+
+  if (deviceSignature && sanitizedIp) {
+    return `ip_${sanitizedIp}_dev_${deviceSignature}_fp_${sanitizedFp || sanitizedVoterId}`;
+  }
+  if (sanitizedFp && sanitizedIp) {
+    return `ip_${sanitizedIp}_fp_${sanitizedFp}`;
+  }
+  if (sanitizedVoterId) {
+    return `vid_${sanitizedVoterId}`;
+  }
+  return `ip_${sanitizedIp}`;
+}
+
 // GET handler: returns current status and if client device has voted
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req);
   const store = await getSessionDoc();
   const url = new URL(req.url);
   const voterId = url.searchParams.get("voterId") || "";
+  const fingerprint = url.searchParams.get("fingerprint") || "";
 
   // Read team names from CONFIG_FILE_PATH
   let teamNames: string[] = ["Nhóm 1", "Nhóm 2", "Nhóm 3", "Nhóm 4"];
@@ -165,11 +210,12 @@ export async function GET(req: NextRequest) {
   });
 
   const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  const voterKey = getVoterKey(req, voterId, fingerprint);
   
+  const compositeVotes = store.votedDevices && voterKey ? getVotedList(store.votedDevices[voterKey]) : [];
   const deviceVotes = store.votedDevices && sanitizedVoterId ? getVotedList(store.votedDevices[sanitizedVoterId]) : [];
-  const ipVotes = store.votedIps && sanitizedIp ? getVotedList(store.votedIps[sanitizedIp]) : [];
-  const votedTeamIds = Array.from(new Set([...deviceVotes, ...ipVotes]));
+  
+  const votedTeamIds = Array.from(new Set([...compositeVotes, ...deviceVotes]));
 
   return NextResponse.json({
     title: store.title,
@@ -186,18 +232,18 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST handler: casts a vote for a team based on unique voterId or clientIp
+// POST handler: casts a vote for a team based on composite key (IP + fingerprint / voterId)
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
   const body = await req.json();
-  const { teamId, voterId } = body;
+  const { teamId, voterId, fingerprint } = body;
 
   if (!teamId) {
     return NextResponse.json({ error: "Missing teamId" }, { status: 400 });
   }
 
-  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-  const deviceKey = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : sanitizedIp;
+  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  const voterKey = getVoterKey(req, voterId, fingerprint);
   const sessionDocRef = doc(db, "sessions", "voting_session");
 
   try {
@@ -209,25 +255,12 @@ export async function POST(req: NextRequest) {
 
       const session = sessionSnap.data() as SessionState;
       const votedDevices = session.votedDevices || {};
-      const votedIps = session.votedIps || {};
 
-      const existingDeviceVotes = getVotedList(votedDevices[deviceKey]);
-      const existingIpVotes = getVotedList(votedIps[sanitizedIp]);
-      const combinedVotes = Array.from(new Set([...existingDeviceVotes, ...existingIpVotes]));
-
-      // 1. Check if user already voted for this specific team
-      if (combinedVotes.includes(teamId)) {
-        return { 
-          error: "Bạn đã bình chọn cho đội này rồi!" 
-        };
-      }
-
-      // 2. Check if user reached maximum limit of 2 votes
-      if (combinedVotes.length >= 2) {
-        return { 
-          error: "Bạn đã sử dụng tối đa 2 lượt bình chọn!" 
-        };
-      }
+      // Read existing votes for ALL possible keys for this voter (composite + voterId)
+      // This ensures race condition safety: Firestore transaction re-reads on conflict
+      const allVoterKeys = Array.from(new Set([voterKey, sanitizedVoterId].filter(Boolean)));
+      const allExistingVotes = allVoterKeys.flatMap(k => getVotedList(votedDevices[k]));
+      const combinedVotes = Array.from(new Set(allExistingVotes));
 
       if (!session.votingStarted) {
         return { error: "Voting has not started yet!" };
@@ -244,31 +277,47 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 3. Update vote count and register device & IP lock
       const updatedVotes = { ...session.votes };
-      updatedVotes[teamId] = (updatedVotes[teamId] || 0) + 1;
-      
-      const newDeviceList = Array.from(new Set([...existingDeviceVotes, teamId]));
-      const newIpList = Array.from(new Set([...existingIpVotes, teamId]));
+      const isAlreadyVoted = combinedVotes.includes(teamId);
+      let newVoteList: string[] = [];
+      let actionType = "";
+
+      if (isAlreadyVoted) {
+        // UNVOTE / Bỏ chọn: Giảm số vote và xóa khỏi danh sách
+        updatedVotes[teamId] = Math.max(0, (updatedVotes[teamId] || 1) - 1);
+        newVoteList = combinedVotes.filter(id => id !== teamId);
+        actionType = "UNVOTED";
+      } else {
+        // VOTE / Chọn mới: Kiểm tra giới hạn 2 vote — checked INSIDE transaction (atomic)
+        if (combinedVotes.length >= 2) {
+          return { 
+            error: "Bạn đã sử dụng tối đa 2 lượt bình chọn! Vui lòng bỏ chọn một đội trước khi chọn đội mới." 
+          };
+        }
+        updatedVotes[teamId] = (updatedVotes[teamId] || 0) + 1;
+        newVoteList = Array.from(new Set([...combinedVotes, teamId]));
+        actionType = "VOTED";
+      }
 
       const updatedVotedDevices = { ...votedDevices };
-      if (deviceKey) {
-        updatedVotedDevices[deviceKey] = newDeviceList;
+      if (voterKey) {
+        updatedVotedDevices[voterKey] = newVoteList;
+      }
+      if (sanitizedVoterId) {
+        updatedVotedDevices[sanitizedVoterId] = newVoteList;
       }
 
-      const updatedVotedIps = { ...votedIps };
-      if (sanitizedIp) {
-        updatedVotedIps[sanitizedIp] = newIpList;
-      }
-
-      // 4. Perform database updates
+      // Perform database updates
       transaction.update(sessionDocRef, { 
         votes: updatedVotes,
-        votedDevices: updatedVotedDevices,
-        votedIps: updatedVotedIps
+        votedDevices: updatedVotedDevices
       });
 
-      return { success: true, votedTeamIds: Array.from(new Set([...combinedVotes, teamId])) };
+      return { 
+        success: true, 
+        votedTeamIds: newVoteList, 
+        action: actionType 
+      };
     });
 
     if (result.error) {
@@ -278,6 +327,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ 
       success: true, 
       votedTeamIds: result.votedTeamIds,
+      action: result.action,
       clientIp: ip
     });
 
