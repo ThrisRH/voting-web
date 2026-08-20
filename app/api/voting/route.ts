@@ -155,45 +155,26 @@ async function getSessionDoc(): Promise<SessionState> {
 
 const deviceDetector = new DeviceDetector();
 
-// Helper to get composite voter key (IP + User-Agent parsed device + fingerprint / voterId)
+// Helper to get hardware-based voter key (Class C IP + Hardware fingerprint)
 function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): string {
   const ip = getClientIp(req);
-  const userAgent = req.headers.get("user-agent") || "";
   
-  let deviceSignature = "";
-  try {
-    if (userAgent) {
-      const parsed = deviceDetector.parse(userAgent);
-      const osName = parsed.os?.name || "";
-      const osVer = parsed.os?.version || "";
-      const deviceType = parsed.device?.type || "";
-      const deviceBrand = parsed.device?.brand || "";
-      const deviceModel = parsed.device?.model || "";
-      const clientName = parsed.client?.name || "";
-      
-      const sig = `${osName}_${osVer}_${deviceType}_${deviceBrand}_${deviceModel}_${clientName}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-      if (sig && sig !== "_____") {
-        deviceSignature = sig;
-      }
+  // Normalize IP to Class C subnet (e.g. 171.243.48.140 -> 171_243_48)
+  let ipSegment = "127_0_0";
+  if (ip && ip !== "::1" && ip !== "127.0.0.1") {
+    const parts = ip.split(".");
+    if (parts.length >= 3) {
+      ipSegment = `${parts[0]}_${parts[1]}_${parts[2]}`;
+    } else {
+      // IPv6 fallback
+      ipSegment = ip.substring(0, 19).replace(/[^a-zA-Z0-9_-]/g, "_");
     }
-  } catch (e) {
-    console.error("DeviceDetector error:", e);
   }
 
-  const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "127_0_0_1";
-  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
   const sanitizedFp = fingerprint ? fingerprint.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+  const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
 
-  if (deviceSignature && sanitizedIp) {
-    return `ip_${sanitizedIp}_dev_${deviceSignature}_fp_${sanitizedFp || sanitizedVoterId}`;
-  }
-  if (sanitizedFp && sanitizedIp) {
-    return `ip_${sanitizedIp}_fp_${sanitizedFp}`;
-  }
-  if (sanitizedVoterId) {
-    return `vid_${sanitizedVoterId}`;
-  }
-  return `ip_${sanitizedIp}`;
+  return `ip_${ipSegment}_fp_${sanitizedFp || sanitizedVoterId}`;
 }
 
 // GET handler: returns current status and if client device has voted

@@ -59,22 +59,35 @@ function safeRemoveLocalStorage(key: string): void {
 
 let memoryVoterId = "";
 
-// Helper to get device fingerprint
+// Helper to get hardware-based device fingerprint (excluding User-Agent to group webviews together)
 function getDeviceFingerprint(): string {
   try {
     if (typeof window === "undefined") return "";
     const nav = window.navigator || ({} as Navigator);
     const screen = window.screen || ({} as Screen);
     
+    // Draw canvas texture to identify hardware GPU renderer differences
+    let gpu = "";
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = (canvas.getContext("webgl") || canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+      if (gl) {
+        const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+        if (debugInfo) {
+          gpu = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "";
+        }
+      }
+    } catch (e) {}
+
     const components = [
-      nav.userAgent || "",
       nav.language || "",
       screen.colorDepth || 0,
       screen.width ? screen.width + "x" + screen.height : "",
       screen.availWidth ? screen.availWidth + "x" + screen.availHeight : "",
       new Date().getTimezoneOffset(),
       nav.hardwareConcurrency || 0,
-      nav.platform || ""
+      (nav as any).deviceMemory || 0,
+      gpu
     ];
     
     let hash = 0;
@@ -84,9 +97,9 @@ function getDeviceFingerprint(): string {
       hash = (hash << 5) - hash + char;
       hash |= 0;
     }
-    return "fp_" + Math.abs(hash).toString(36);
+    return "hw_" + Math.abs(hash).toString(36);
   } catch (e) {
-    return "fp_fallback_" + Math.random().toString(36).substring(2, 8);
+    return "hw_fallback_" + Math.random().toString(36).substring(2, 8);
   }
 }
 
