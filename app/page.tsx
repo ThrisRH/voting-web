@@ -168,9 +168,9 @@ export default function Home() {
           }
         } catch (e) {}
 
-        // 2. Fetch IP & voted status from API with 3.5s timeout
+        // 2. Fetch IP & voted status from API with 10s timeout to accommodate Vercel cold starts
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         const statusRes = await fetch(
           `/api/voting?voterId=${encodeURIComponent(id)}&fingerprint=${encodeURIComponent(fp)}&token=${encodeURIComponent(urlToken)}`,
@@ -208,6 +208,13 @@ export default function Home() {
             } else {
               setVotedTeamIds([]);
             }
+          }
+        } else {
+          // Fallback if API fetch failed or timed out: if session is active and no stored token exists, block access
+          const storedToken = safeGetLocalStorage("voting_voter_token") || urlToken;
+          if (!storedToken && isSubscribed) {
+            setTokenValid(false);
+            setTokenError("🔒 Đã đóng lượt tham gia! Phiên bình chọn đã bắt đầu. Bạn chưa đăng ký màn hình chờ trước đó.");
           }
         }
 
@@ -259,10 +266,18 @@ export default function Home() {
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
-          setVotingStarted(data.votingStarted || false);
+          const isStarted = data.votingStarted || false;
+          setVotingStarted(isStarted);
           setTimerRunning(data.timerRunning || false);
           setEndTime(data.endTime || null);
           setPausedTimeLeft(data.pausedTimeLeft !== undefined ? data.pausedTimeLeft : duration);
+          
+          // Strict real-time check: If voting has started and this voter has NO stored pre-registered token, block immediately
+          const activeTokenInStorage = safeGetLocalStorage("voting_voter_token") || token;
+          if (isStarted && !activeTokenInStorage) {
+            setTokenValid(false);
+            setTokenError("🔒 Đã đóng lượt tham gia! Phiên bình chọn đã bắt đầu. Chỉ những người đã ở màn hình chờ trước khi Host bắt đầu mới có thể bình chọn.");
+          }
           
           // Check if session was reset: auto log out Host if reset occurred after/at Host login
           const resetTimestamp = data.resetTimestamp || 0;

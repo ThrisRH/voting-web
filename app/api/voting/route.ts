@@ -311,7 +311,14 @@ export async function GET(req: NextRequest) {
         voterTokens[activeToken] = newRecord;
 
         const sessionDocRef = doc(db, "sessions", "voting_session");
-        await updateDoc(sessionDocRef, { voterTokens }).catch(err => console.error("Error saving voterTokens:", err));
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(sessionDocRef);
+          if (snap.exists()) {
+            const currentTokens = snap.data().voterTokens || {};
+            currentTokens[activeToken] = newRecord;
+            tx.update(sessionDocRef, { voterTokens: currentTokens });
+          }
+        }).catch(err => console.error("Error saving voterTokens transaction:", err));
       }
     }
   }
