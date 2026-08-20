@@ -109,6 +109,40 @@ export default function Home() {
   // UI States
   const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
   const [serverVoterKey, setServerVoterKey] = useState<string>("");
+  
+  // PKCE Helper functions for Zalo OAuth 2.0
+  const generateRandomString = (length: number) => {
+    const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    let result = "";
+    for (let i = 0; i < length; i++) {
+      result += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    return result;
+  };
+
+  const sha256 = async (plain: string) => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plain);
+    const hash = await window.crypto.subtle.digest("SHA-256", data);
+    return hash;
+  };
+
+  const base64urlencode = (a: ArrayBuffer) => {
+    const bytes = new Uint8Array(a);
+    let str = "";
+    for (let i = 0; i < bytes.byteLength; i++) {
+      str += String.fromCharCode(bytes[i]);
+    }
+    return btoa(str)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=/g, "");
+  };
+
+  const generateCodeChallenge = async (verifier: string) => {
+    const hashed = await sha256(verifier);
+    return base64urlencode(hashed);
+  };
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

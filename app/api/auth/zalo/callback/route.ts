@@ -13,6 +13,9 @@ export async function GET(req: NextRequest) {
   const callbackUrl = process.env.URL || "";
 
   try {
+    // Retrieve the code_verifier from the client cookie
+    const codeVerifier = req.cookies.get("zalo_code_verifier")?.value || "";
+
     // 1. Exchange authorization code for access token
     const tokenRes = await fetch("https://oauth.zaloapp.com/v4/access_token", {
       method: "POST",
@@ -23,7 +26,8 @@ export async function GET(req: NextRequest) {
       body: new URLSearchParams({
         code: code,
         app_id: appId,
-        grant_type: "authorization_code"
+        grant_type: "authorization_code",
+        code_verifier: codeVerifier
       })
     });
 
@@ -57,13 +61,16 @@ export async function GET(req: NextRequest) {
     };
 
     // 3. Serialize and set secure cookies to authenticate user session on client side
-    const response = NextResponse.redirect(new URL("/", req.url));
+    const origin = req.nextUrl.origin;
+    const response = NextResponse.redirect(origin);
     response.cookies.set("zalo_user", JSON.stringify(userSession), {
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
       httpOnly: false, // Allow client side to read it easily for UI display
       sameSite: "lax"
     });
+    // Delete the temporary PKCE verifier cookie
+    response.cookies.delete("zalo_code_verifier");
 
     return response;
   } catch (err) {
