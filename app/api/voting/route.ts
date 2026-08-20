@@ -256,10 +256,16 @@ export async function GET(req: NextRequest) {
   if (tokenFromQuery) {
     const rec = voterTokens[tokenFromQuery];
     if (!rec) {
-      // Old token was cleared during host/endpoint reset.
-      // Allow user to enter waiting state with a BRAND NEW 6-digit code & token.
-      tokenValid = true;
-      activeToken = "";
+      if (store.votingStarted) {
+        // If session started and token is invalid/missing: block access
+        tokenValid = false;
+        tokenError = "🔒 Đã đóng lượt tham gia! Phiên bình chọn đã bắt đầu. Bạn chưa đăng ký màn hình chờ trước đó.";
+      } else {
+        // Old token was cleared during host/endpoint reset.
+        // Allow user to enter waiting state with a BRAND NEW 6-digit code & token.
+        tokenValid = true;
+        activeToken = "";
+      }
     } else {
       const isFpMatch = fingerprint && rec.fingerprint && rec.fingerprint === fingerprint;
       const isVoterIdMatch = voterId && rec.voterId && rec.voterId === voterId;
@@ -282,23 +288,31 @@ export async function GET(req: NextRequest) {
     if (existingEntry) {
       activeToken = existingEntry[0];
       activeCode = existingEntry[1].code;
-    } else if (voterId || fingerprint) {
-      activeCode = generateUniqueCode(voterTokens);
-      activeToken = "vtok_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now().toString(36);
+    } else {
+      // Voter has no prior registration in voterTokens
+      if (store.votingStarted) {
+        // Voting has ALREADY started! Block new voters who did not join during waiting screen
+        tokenValid = false;
+        tokenError = "🔒 Đã đóng lượt tham gia! Phiên bình chọn đã bắt đầu. Chỉ những người đã ở màn hình chờ trước khi Host bắt đầu mới có thể bình chọn.";
+      } else if (voterId || fingerprint) {
+        // Session is in waiting state: Allow registering a new code & token
+        activeCode = generateUniqueCode(voterTokens);
+        activeToken = "vtok_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now().toString(36);
 
-      const newRecord: TokenRecord = {
-        code: activeCode,
-        voterId,
-        ip,
-        fingerprint,
-        deviceSignature,
-        createdAt: Date.now()
-      };
+        const newRecord: TokenRecord = {
+          code: activeCode,
+          voterId,
+          ip,
+          fingerprint,
+          deviceSignature,
+          createdAt: Date.now()
+        };
 
-      voterTokens[activeToken] = newRecord;
+        voterTokens[activeToken] = newRecord;
 
-      const sessionDocRef = doc(db, "sessions", "voting_session");
-      await updateDoc(sessionDocRef, { voterTokens }).catch(err => console.error("Error saving voterTokens:", err));
+        const sessionDocRef = doc(db, "sessions", "voting_session");
+        await updateDoc(sessionDocRef, { voterTokens }).catch(err => console.error("Error saving voterTokens:", err));
+      }
     }
   }
 
