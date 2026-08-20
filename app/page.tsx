@@ -5,7 +5,6 @@ import {
   Trophy, 
   Timer, 
   Check, 
-  RefreshCw, 
   Play, 
   Pause, 
   Settings, 
@@ -27,9 +26,15 @@ interface Team {
   votes: number;
 }
 
+interface ZaloUser {
+  id: string;
+  name: string;
+  avatar: string;
+}
+
 const ADMIN_PASSWORD = "123456";
 
-// Safe localStorage access wrappers that never throw in private/incognito modes
+// Safe localStorage access wrappers
 function safeGetLocalStorage(key: string): string | null {
   try {
     if (typeof window === "undefined" || !window.localStorage) return null;
@@ -44,7 +49,7 @@ function safeSetLocalStorage(key: string, val: string): void {
     if (typeof window === "undefined" || !window.localStorage) return;
     localStorage.setItem(key, val);
   } catch (e) {
-    // Ignore storage restrictions in incognito mode
+    // Ignore storage restrictions
   }
 }
 
@@ -57,46 +62,24 @@ function safeRemoveLocalStorage(key: string): void {
   }
 }
 
-let memoryVoterId = "";
-
-// Helper to get hardware-based device fingerprint (excluding User-Agent to group webviews together)
-function getDeviceFingerprint(): string {
-  try {
-    if (typeof window === "undefined") return "";
-    const nav = window.navigator || ({} as Navigator);
-    const screen = window.screen || ({} as Screen);
-    
-    // Draw canvas texture to identify hardware GPU renderer differences
-    let gpu = "";
+// Read Zalo User from document cookies
+function getZaloUserFromCookie(): ZaloUser | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(^|;)\s*zalo_user\s*=\s*([^;]+)/);
+  if (match) {
     try {
-      const canvas = document.createElement("canvas");
-      const gl = (canvas.getContext("webgl") || canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
-      if (gl) {
-        const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
-        if (debugInfo) {
-          gpu = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "";
-        }
-      }
-    } catch (e) {}
-
-    // Only use structural hardware properties that are guaranteed to match
-    // across all Webviews/browsers on the same device.
-    const components = [
-      screen.width && screen.height ? screen.width + "x" + screen.height : "",
-      nav.hardwareConcurrency || 0
-    ];
-    
-    let hash = 0;
-    const str = components.join("||");
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash |= 0;
+      return JSON.parse(decodeURIComponent(match[2])) as ZaloUser;
+    } catch (e) {
+      return null;
     }
-    return "hw_" + Math.abs(hash).toString(36);
-  } catch (e) {
-    return "hw_fallback_" + Math.random().toString(36).substring(2, 8);
   }
+  return null;
+}
+
+// Clear cookie session
+function deleteZaloCookie() {
+  if (typeof document === "undefined") return;
+  document.cookie = "zalo_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
 }
 
 export default function Home() {
@@ -107,6 +90,7 @@ export default function Home() {
   const [totalVotes, setTotalVotes] = useState<number>(0);
   const [clientIp, setClientIp] = useState<string>("");
   const [voterId, setVoterId] = useState<string>("");
+  const [zaloUser, setZaloUser] = useState<ZaloUser | null>(null);
   const [pendingTeamId, setPendingTeamId] = useState<string | null>(null);
   const pendingTeamIdRef = useRef<string | null>(null);
   
@@ -125,137 +109,36 @@ export default function Home() {
   // UI States
   const [votedTeamIds, setVotedTeamIds] = useState<string[]>([]);
   const [serverVoterKey, setServerVoterKey] = useState<string>("");
-  const [biometricFingerprint, setBiometricFingerprint] = useState<string>("");
-  const [showBiometricModal, setShowBiometricModal] = useState<boolean>(false);
-  const [isBiometricSupported, setIsBiometricSupported] = useState<boolean>(true);
-  const [biometricError, setBiometricError] = useState<string | null>(null);
-  const [biometricLoading, setBiometricLoading] = useState<boolean>(false);
-
-  // Checks device biometric capability on client mount
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const supported = !!window.PublicKeyCredential;
-      setIsBiometricSupported(supported);
-      if (!supported) {
-        setBiometricError("Trình duyệt hoặc ứng dụng không hỗ trợ vân tay/FaceID. Vui lòng mở bằng Chrome hoặc Safari gốc để tiếp tục!");
-      }
-    }
-  }, []);
-
-  // Triggers WebAuthn registration interface on the OS (Fingerprint/FaceID)
-  // Reuses the previously created credential from local storage if available to keep the fingerprint persistent.
-  const triggerBiometricScan = async (): Promise<string | null> => {
-    // 1. Try to read existing biometric ID from local storage first to ensure 100% consistency across sessions
-    const cachedBioId = safeGetLocalStorage("voting_biometric_id");
-    if (cachedBioId) {
-      setBiometricFingerprint(cachedBioId);
-      setShowBiometricModal(false);
-      return cachedBioId;
-    }
-
-    setBiometricLoading(true);
-    setBiometricError(null);
-    try {
-      if (typeof window === "undefined" || !window.PublicKeyCredential) {
-        throw new Error("Trình duyệt không hỗ trợ quét sinh trắc học!");
-      }
-
-      // Generate localized credential creation parameters
-      const challenge = new Uint8Array(32);
-      window.crypto.getRandomValues(challenge);
-
-      const userId = new Uint8Array(16);
-      window.crypto.getRandomValues(userId);
-
-      const creationOptions: PublicKeyCredentialCreationOptions = {
-        challenge: challenge,
-        rp: {
-          name: "O.Tech Voting",
-          id: window.location.hostname
-        },
-        user: {
-          id: userId,
-          name: "voter@otech-voting.com",
-          displayName: "Otech Voter"
-        },
-        pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256 algorithm
-        authenticatorSelection: {
-          authenticatorAttachment: "platform", // Enforce built-in Touch ID/FaceID/Windows Hello
-          userVerification: "required"
-        },
-        timeout: 60000
-      };
-
-      const credential = await navigator.credentials.create({
-        publicKey: creationOptions
-      }) as PublicKeyCredential;
-
-      if (!credential) {
-        throw new Error("Không lấy được thông tin xác thực!");
-      }
-
-      const hashId = credential.id;
-      
-      // Save to localStorage safely to keep it permanent on this browser environment
-      safeSetLocalStorage("voting_biometric_id", hashId);
-      
-      setBiometricFingerprint(hashId);
-      setShowBiometricModal(false);
-      setBiometricError(null);
-      return hashId;
-    } catch (err: any) {
-      console.error("Biometric Authentication failed:", err);
-      let errMsg = "Không thể quét vân tay/FaceID. Vui lòng thử lại!";
-      if (err.name === "NotAllowedError") {
-        errMsg = "Quyền truy cập vân tay/FaceID bị từ chối hoặc bị hủy.";
-      } else if (err.message) {
-        errMsg = err.message;
-      }
-      setBiometricError(errMsg);
-      return null;
-    } finally {
-      setBiometricLoading(false);
-    }
-  };
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confettiFired, setConfettiFired] = useState<boolean>(false);
 
-  // Consolidated fail-safe client initialization (runs once on mount)
+  // Consolidated client initialization
   useEffect(() => {
     let isSubscribed = true;
 
     async function initializeClient() {
       try {
-        // 1. Get or create voterId safely
-        let id = safeGetLocalStorage("voting_voter_id");
-        if (!id) {
-          if (!memoryVoterId) {
-            memoryVoterId = "voter_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+        // Read Zalo User Session
+        const user = getZaloUserFromCookie();
+        if (isSubscribed) {
+          setZaloUser(user);
+          if (user) {
+            setVoterId(user.id);
           }
-          id = memoryVoterId;
-          safeSetLocalStorage("voting_voter_id", id);
         }
-        if (isSubscribed) setVoterId(id);
 
-        const fp = getDeviceFingerprint();
-
-        // 2. Fetch IP & voted status from API with 3.5s timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-
+        // Fetch IP & initial voted status
         const statusRes = await fetch(
-          `/api/voting?voterId=${encodeURIComponent(id)}&fingerprint=${encodeURIComponent(fp)}`,
-          { cache: "no-store", signal: controller.signal }
+          `/api/voting?voterId=${encodeURIComponent(user?.id || "")}`,
+          { cache: "no-store" }
         ).catch(() => null);
-        clearTimeout(timeoutId);
 
         if (statusRes && statusRes.ok) {
           const data = await statusRes.json().catch(() => ({}));
           if (isSubscribed) {
             setClientIp(data.clientIp || "127.0.0.1");
-            // Capture voterKey from backend dynamically to ensure 100% match
             if (data.voterKey) {
               setServerVoterKey(data.voterKey);
             }
@@ -269,7 +152,7 @@ export default function Home() {
           }
         }
 
-        // 3. Fetch team config names
+        // Fetch team config names
         const configRes = await fetch("/teams.json", { cache: "no-store" }).catch(() => null);
         let defaultTeams = ["Team 1", "Team 2", "Team 3", "Team 4"];
         if (configRes && configRes.ok) {
@@ -307,11 +190,10 @@ export default function Home() {
 
   // Listen to Firestore changes in real-time
   useEffect(() => {
-    if (loading || !voterId) return;
+    if (loading) return;
 
     const docRef = doc(db, "sessions", "voting_session");
     
-    // Subscribe to real-time changes
     const unsubscribe = onSnapshot(
       docRef, 
       (snapshot) => {
@@ -322,7 +204,6 @@ export default function Home() {
           setEndTime(data.endTime || null);
           setPausedTimeLeft(data.pausedTimeLeft !== undefined ? data.pausedTimeLeft : duration);
           
-          // Check if session was reset: auto log out Host if reset occurred after/at Host login
           const resetTimestamp = data.resetTimestamp || 0;
           const hostLoginTime = parseInt(safeGetLocalStorage("voting_host_login_time") || "0", 10);
           if (resetTimestamp > 0 && (hostLoginTime === 0 || resetTimestamp >= hostLoginTime)) {
@@ -330,6 +211,7 @@ export default function Home() {
             safeRemoveLocalStorage("voting_app_is_host");
             safeRemoveLocalStorage("voting_host_login_time");
           }
+          
           const votesMap = data.votes || {};
           const currentConfig = teamNamesConfig.length > 0 ? teamNamesConfig : ["Team 1", "Team 2", "Team 3", "Team 4"];
           const updatedTeams = currentConfig.map((name, idx) => {
@@ -355,9 +237,7 @@ export default function Home() {
             return [];
           };
 
-          // Use the absolute source of truth voterKey returned from the backend
           const currentVotedIds = serverVoterKey ? getVotedList(votedDevicesMap[serverVoterKey]) : [];
-
           if (!pendingTeamIdRef.current) {
             setVotedTeamIds(currentVotedIds);
           }
@@ -478,15 +358,6 @@ export default function Home() {
     setPendingTeamId(teamId);
     pendingTeamIdRef.current = teamId;
 
-    // If biometric credential has not been created yet, show modal and request authentication first
-    let currentFp = biometricFingerprint;
-    if (!currentFp) {
-      setShowBiometricModal(true);
-      setPendingTeamId(null);
-      pendingTeamIdRef.current = null;
-      return;
-    }
-
     // Optimistic Update (Immediate visual response)
     const previousVotedIds = [...votedTeamIds];
     let nextVotedIds: string[];
@@ -502,7 +373,7 @@ export default function Home() {
       const res = await fetch("/api/voting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teamId, voterId, fingerprint: currentFp })
+        body: JSON.stringify({ teamId, voterId })
       });
 
       const data = await res.json();
@@ -573,7 +444,7 @@ export default function Home() {
     }
   };
 
-  // Victory Banner: reveals winning team to Host ONLY after timer ends
+  // Victory Banner
   const renderVictoryText = () => {
     if (!isHost) {
       return "Victory: (could be your team)";
@@ -590,7 +461,6 @@ export default function Home() {
     const winner = getWinner();
     if (!winner) return "No votes cast";
 
-    // Check for tie: find all teams with the same max vote count
     const maxVotes = winner.votes;
     const tiedTeams = teams.filter(t => t.votes === maxVotes && maxVotes > 0);
 
@@ -602,9 +472,29 @@ export default function Home() {
     return `Victory: ${winner.name}`;
   };
 
+  const handleZaloLogin = () => {
+    const appId = process.env.NEXT_PUBLIC_ZALO_APP_ID || "";
+    const callbackUrl = process.env.NEXT_PUBLIC_ZALO_CALLBACK_URL || "";
+    const state = Math.random().toString(36).substring(7);
+    
+    if (!appId) {
+      alert("Chưa cấu hình Zalo App ID! Vui lòng thiết lập trong file .env");
+      return;
+    }
+    
+    // Redirect to Zalo authorization page
+    window.location.href = `https://oauth.zaloapp.com/v4/permission?app_id=${appId}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}`;
+  };
+
+  const handleSignOut = () => {
+    deleteZaloCookie();
+    setZaloUser(null);
+    setVoterId("");
+    window.location.reload();
+  };
+
   return (
     <div className="flex flex-col h-screen max-h-screen w-full bg-[#fcfefd] text-[#1e293b] font-sans antialiased overflow-hidden select-none relative">
-      {/* Top green accent bar */}
       <div className="h-1 w-full bg-[#369d5c] shrink-0" />
 
       {/* ERROR TOAST */}
@@ -621,10 +511,10 @@ export default function Home() {
         {/* Core Container Card */}
         <div className="w-full bg-white border border-[#e2e8f0] p-3 sm:p-5 md:p-8 shadow-sm rounded-[4px] flex flex-col overflow-hidden max-h-full">
           
-          {/* HEADER (12px gap) */}
+          {/* HEADER */}
           <div className="flex flex-col items-center gap-[12px] w-full text-center shrink-0">
             
-            {/* Event Hero Banner (Full Size - No Cropping) */}
+            {/* Event Hero Banner */}
             <div className="w-full relative rounded-[6px] overflow-hidden border border-slate-200/80 shadow-sm bg-slate-50 flex items-center justify-center shrink-0">
               <img
                 src="/banner.jpg"
@@ -647,7 +537,6 @@ export default function Home() {
 
             {/* Title & Status indicator */}
             <div className="flex flex-col items-center gap-[12px]">
-              {/* Timer Badge */}
               {votingStarted && (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-[4px]">
                   <Timer className={`w-3.5 h-3.5 ${timerRunning && timeLeft > 0 ? "text-[#369d5c] animate-spin-slow" : "text-slate-400"}`} />
@@ -661,20 +550,70 @@ export default function Home() {
 
           </div>
 
-          {/* SPACING: 20px - 32px gap between header and content card area */}
           <div className="mt-4 sm:mt-[32px] flex-1 flex flex-col gap-[12px] overflow-hidden">
             
             {loading ? (
               <div className="flex-1 flex justify-center items-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#369d5c]"></div>
               </div>
+            ) : !zaloUser && !isHost ? (
+              
+              /* CASE 0: USER NOT LOGGED IN YET (ZALO BLOCKER) */
+              <div className="flex-1 flex flex-col justify-center items-center text-center p-4 gap-6">
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center border border-blue-100">
+                  <Users className="w-8 h-8 text-blue-500" />
+                </div>
+                
+                <div className="flex flex-col gap-2 max-w-sm">
+                  <h2 className="font-bold text-slate-800 text-lg">Đăng Nhập Zalo</h2>
+                  <p className="text-xs text-slate-500 leading-relaxed px-4">
+                    Vui lòng đăng nhập tài khoản Zalo của bạn để xác minh danh tính và bắt đầu tham gia bình chọn.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleZaloLogin}
+                  className="w-full max-w-xs py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-[4px] shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
+                >
+                  <img src="/vote.png" alt="Zalo Logo" className="w-5 h-5 object-contain invert brightness-200" onError={(e) => e.currentTarget.style.display="none"} />
+                  Đăng Nhập Bằng Zalo
+                </button>
+
+                {/* Host access on lock screen */}
+                <form onSubmit={handleHostLogin} className="w-full max-w-xs mt-6 pt-4 border-t border-slate-100 flex flex-col gap-[6px]">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                    <span>Host access:</span>
+                    {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
+                  </div>
+                  <div className="flex items-center gap-[6px]">
+                    <div className="relative flex-1 flex items-center">
+                      <div className="absolute left-2.5 inset-y-0 flex items-center pointer-events-none text-slate-400">
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                      </div>
+                      <input
+                        type="password"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        placeholder="Password..."
+                        className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </form>
+              </div>
+
             ) : !votingStarted ? (
               
               /* CASE 1: Voting NOT STARTED Yet */
               <div className="flex-1 flex flex-col justify-center items-center text-center p-2 sm:p-4 gap-[12px]">
                 
                 {isHost ? (
-                  /* Host waiting view */
                   <div className="flex flex-col items-center gap-[12px] max-w-sm">
                     <div className="w-12 h-12 bg-[#369d5c]/10 text-[#369d5c] rounded-[4px] flex items-center justify-center">
                       <Settings className="w-6 h-6 animate-pulse" />
@@ -691,8 +630,21 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
-                  /* Employee waiting view */
                   <div className="flex flex-col items-center gap-[12px] max-w-sm">
+                    {/* User Profile display */}
+                    {zaloUser && (
+                      <div className="flex items-center gap-2 mb-4 p-2 bg-slate-50 border border-slate-100 rounded-full pr-4">
+                        <img src={zaloUser.avatar} alt={zaloUser.name} className="w-8 h-8 rounded-full border border-slate-200" />
+                        <div className="flex flex-col text-left">
+                          <span className="text-[10px] text-slate-400 font-medium">Đã đăng nhập:</span>
+                          <span className="text-xs font-bold text-slate-700 leading-tight">{zaloUser.name}</span>
+                        </div>
+                        <button onClick={handleSignOut} className="ml-2 text-slate-400 hover:text-rose-500 cursor-pointer">
+                          <LogOut className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
                     <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-[4px] border border-slate-100 flex items-center justify-center animate-bounce">
                       <Users className="w-6 h-6" />
                     </div>
@@ -706,36 +658,6 @@ export default function Home() {
                   </div>
                 )}
                 
-                {/* Host authentication login form inside waiting page */}
-                {!isHost && (
-                  <form onSubmit={handleHostLogin} className="w-full max-w-xs mt-6 pt-4 border-t border-slate-100 flex flex-col gap-[6px]">
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                      <span>Host access:</span>
-                      {passwordError && <span className="text-rose-500 font-bold">Incorrect password!</span>}
-                    </div>
-                    <div className="flex items-center gap-[6px]">
-                      <div className="relative flex-1 flex items-center">
-                        <div className="absolute left-2.5 inset-y-0 flex items-center pointer-events-none text-slate-400">
-                          <Lock className="w-3.5 h-3.5 shrink-0" />
-                        </div>
-                        <input
-                          type="password"
-                          value={passwordInput}
-                          onChange={(e) => setPasswordInput(e.target.value)}
-                          placeholder="Password..."
-                          className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-[4px] text-xs focus:outline-none focus:border-[#369d5c] focus:bg-white text-slate-700 placeholder:text-slate-400 leading-normal"
-                        />
-                      </div>
-                      <button
-                        type="submit"
-                        className="p-1.5 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
-                      >
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </form>
-                )}
-
               </div>
 
             ) : (
@@ -743,159 +665,127 @@ export default function Home() {
               /* CASE 2: Voting ACTIVE / STARTED */
               <div className="flex-1 flex flex-col gap-[12px] overflow-hidden">
                 
-                {/* Total count details (Shown ONLY to Host to keep voter UI clean & vote-free) */}
+                {/* User Info & Signout in active mode */}
+                {!isHost && zaloUser && (
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-1 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <img src={zaloUser.avatar} alt={zaloUser.name} className="w-7 h-7 rounded-full border border-slate-200" />
+                      <span className="text-xs text-slate-600">Xin chào, <strong className="text-slate-800">{zaloUser.name}</strong></span>
+                    </div>
+                    <button onClick={handleSignOut} className="text-xs text-slate-400 hover:text-rose-500 flex items-center gap-1 cursor-pointer">
+                      <LogOut className="w-3.5 h-3.5" /> Đăng xuất
+                    </button>
+                  </div>
+                )}
+
                 {isHost && (
                   <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-1.5 text-slate-500 font-medium shrink-0">
                     <span className="flex items-center gap-1"><Settings className="w-3 h-3 text-[#369d5c]" /> Host View (Live Results):</span>
                     <span className="text-slate-800 font-bold bg-[#369d5c]/5 border border-[#369d5c]/15 px-2.5 py-0.5 rounded-[4px]">
-                      {totalVotes.toLocaleString()} votes
+                      Total Votes: {totalVotes}
                     </span>
                   </div>
                 )}
 
-                {/* Team Rows list (Scrollable if overflow) */}
-                <div className="flex-1 overflow-y-auto pr-0.5 flex flex-col gap-[10px] sm:gap-[12px]">
-                  {teams.map((team, index) => {
-                    const percent = getPercentage(team.votes);
-                    const isLeading = timeLeft === 0 && getWinner()?.id === team.id && totalVotes > 0;
-                    const isUserSelection = votedTeamIds.includes(team.id);
-                    const isMaxVotesReached = votedTeamIds.length >= 2;
-                    const isPendingThisTeam = pendingTeamId === team.id;
-                    const isButtonDisabled = isHost || timeLeft === 0 || !!pendingTeamId || (!isUserSelection && isMaxVotesReached);
-                    
-                    return (
-                      <div 
-                        key={team.id}
-                        className={`flex items-center justify-between p-2.5 sm:p-3 bg-white border rounded-[4px] transition-all duration-200 relative overflow-hidden gap-2 ${
-                          isUserSelection 
-                            ? "border-[#369d5c] bg-[#369d5c]/5 ring-1 ring-[#369d5c]" 
-                            : isLeading && isHost
-                              ? "border-amber-300 bg-amber-50/10" 
-                              : "border-slate-200 hover:border-slate-300"
-                        }`}
-                      >
-                        {/* Left: Avatar + Team Name (6px gap) */}
-                        <div className="flex items-center gap-[6px] sm:gap-2 min-w-0 flex-1">
-                          <div className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center font-bold text-xs text-white rounded-[4px] shrink-0"
-                               style={{ backgroundColor: `hsl(${135 + index * 45}, 45%, 43%)` }}>
-                            {team.name.charAt(0)}
-                          </div>
-                          <span className="font-bold text-slate-800 text-xs sm:text-sm md:text-base leading-tight break-words min-w-0" title={team.name}>
-                            {team.name}
-                          </span>
-                        </div>
+                <div className="flex-1 overflow-y-auto pr-1">
+                  <div className="flex flex-col gap-[8px] py-1">
+                    {teams.map((team) => {
+                      const isVoted = votedTeamIds.includes(team.id);
+                      const isPending = pendingTeamId === team.id;
+                      const percentage = getPercentage(team.votes);
+                      const displayPercentage = percentage > 0 ? `${percentage}%` : "0%";
+                      
+                      const showResults = isHost || timeLeft === 0;
 
-                        {/* Middle: Vote representation (Host gets visual vote counts & progress bars) */}
-                        {isHost && (
-                          <div className="flex items-center gap-2 sm:gap-3 px-1 sm:px-3 flex-1 max-w-[140px] sm:max-w-xs md:max-w-md justify-end">
-                            <span className="text-[11px] sm:text-xs text-slate-600 font-bold shrink-0">
-                              {team.votes.toLocaleString()} <span className="hidden sm:inline">votes</span>
-                            </span>
-                            <div className="flex-1 bg-slate-100 h-2 rounded-[4px] overflow-hidden border border-slate-200/50 min-w-[40px]">
-                              <div 
-                                className="bg-[#369d5c] h-full rounded-[4px] transition-all duration-500"
-                                style={{ width: `${percent}%` }}
-                              />
+                      return (
+                        <div key={team.id} className="relative w-full shrink-0">
+                          <button
+                            onClick={() => handleVote(team.id)}
+                            disabled={isHost || timeLeft === 0 || isPending}
+                            className={`w-full text-left p-3.5 border rounded-[4px] relative overflow-hidden transition-all flex items-center justify-between gap-4 leading-normal select-none
+                              ${isVoted 
+                                ? "bg-[#369d5c]/5 border-[#369d5c] shadow-sm text-slate-900" 
+                                : "bg-white border-[#e2e8f0] text-slate-700 hover:border-slate-300 hover:bg-slate-50/50"
+                              }
+                              ${(isHost || timeLeft === 0) ? "cursor-default" : "cursor-pointer active:scale-[0.99]"}
+                            `}
+                          >
+                            <div className="flex items-center gap-2.5 z-10 min-w-0 flex-1">
+                              <div className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center shrink-0 transition-colors
+                                ${isVoted 
+                                  ? "bg-[#369d5c] border-[#369d5c] text-white" 
+                                  : "border-slate-300 bg-white"
+                                }
+                              `}>
+                                {isVoted && <Check className="w-3 h-3 stroke-[3]" />}
+                              </div>
+                              <span className="font-bold text-xs md:text-sm truncate pr-1">
+                                {team.name}
+                              </span>
                             </div>
-                          </div>
-                        )}
 
-                        {/* Right: Checkmark / Unvote Button */}
-                        <button
-                          onClick={() => handleVote(team.id)}
-                          disabled={isButtonDisabled}
-                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-[4px] border flex items-center justify-center transition-all duration-200 shrink-0 ${
-                            isHost || timeLeft === 0
-                              ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
-                              : isUserSelection
-                                ? "bg-[#369d5c] border-[#369d5c] text-white cursor-pointer shadow-sm hover:bg-rose-600 hover:border-rose-600 active:scale-95"
-                                : isMaxVotesReached
-                                  ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
-                                  : "bg-white border-slate-300 hover:border-[#369d5c] text-slate-400 hover:text-[#369d5c] hover:bg-[#369d5c]/5 active:scale-95 cursor-pointer"
-                          }`}
-                          title={
-                            isHost 
-                              ? "Host không thể bình chọn" 
-                              : isUserSelection 
-                                ? "Nhấp để bỏ chọn đội này" 
-                                : isMaxVotesReached 
-                                  ? "Đã chọn đủ 2 lượt (Nhấp vào đội đã chọn để bỏ chọn)" 
-                                  : "Bình chọn cho đội này"
-                          }
-                        >
-                          {isPendingThisTeam ? (
-                            <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <Check className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isUserSelection ? "stroke-[3px]" : "stroke-[2px]"}`} />
-                          )}
-                        </button>
+                            {showResults && (
+                              <div className="flex items-center gap-2 z-10 shrink-0 text-right">
+                                <span className="text-slate-800 font-bold text-xs md:text-sm">
+                                  {displayPercentage}
+                                </span>
+                                <span className="text-slate-400 text-[10px] font-semibold md:text-xs">
+                                  ({team.votes})
+                                </span>
+                              </div>
+                            )}
 
-                      </div>
-                    );
-                  })}
+                            {showResults && (
+                              <div 
+                                className="absolute inset-y-0 left-0 bg-[#369d5c]/10 transition-all duration-500 ease-out z-0" 
+                                style={{ width: `${percentage}%` }}
+                              />
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                {/* Voter Information note */}
-                <div className="text-center text-[10px] text-slate-400 mt-2 font-medium shrink-0 flex flex-col gap-[6px]">
-                  <p>{isHost ? "Giao diện Host (Host không thể bình chọn)." : "Mỗi người được vote tối đa 2 lần (không vote trùng đội)."}</p>
-                  <p className="text-slate-300 text-[8px]">Bảo mật và đồng bộ tự động • Xác thực theo IP & Thiết bị</p>
-                </div>
+                {!isHost && (
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-medium shrink-0 pt-1.5 border-t border-slate-100">
+                    <span>Lượt bình chọn còn lại: {Math.max(0, 2 - votedTeamIds.length)}</span>
+                    <span className="flex items-center gap-1"><Users className="w-3 h-3 text-[#369d5c]" /> Bình chọn an toàn qua Zalo</span>
+                  </div>
+                )}
 
               </div>
             )}
 
           </div>
-
         </div>
-
       </main>
 
-      {/* FLOATING ACTION TOOLBAR */}
-      <div className="fixed bottom-4 right-4 flex items-center gap-2 z-40">
-        {isHost && (
-          <button
-            onClick={() => setIsAdminOpen(true)}
-            className="p-2 bg-slate-800 text-white rounded-[4px] hover:bg-slate-700 transition-colors shadow-lg cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Host Panel</span>
-          </button>
-        )}
-      </div>
+      {/* HOST SETTING DRAWER */}
+      {isAdminOpen && (
+        <div className="fixed inset-y-0 right-0 w-80 bg-white border-l border-slate-200/80 shadow-2xl z-40 p-5 flex flex-col gap-4 animate-in slide-in-from-right duration-200">
+          <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+            <h2 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+              <Settings className="w-4 h-4 text-[#369d5c]" /> Admin Control Panel
+            </h2>
+            <button 
+              onClick={() => setIsAdminOpen(false)}
+              className="p-1 hover:bg-slate-100 rounded-[4px] cursor-pointer text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
 
-      {/* ADMIN OVERLAY CONFIG MODAL */}
-      {isAdminOpen && isHost && (
-        <div className="fixed inset-0 bg-black/45 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-[4px] shadow-2xl max-w-md w-full p-5 flex flex-col gap-[12px] relative animate-in fade-in zoom-in duration-200">
-            
-            {/* Modal Header */}
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wider">
-                <Settings className="w-4 h-4 text-[#369d5c]" />
-                Host Control Panel (Live)
-              </span>
-              <button 
-                onClick={() => setIsAdminOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-[4px] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Voting Session Toggle Control */}
-            <div className="flex flex-col gap-[6px]">
+          <div className="flex-1 flex flex-col gap-4 overflow-y-auto">
+            {/* Session Status Block */}
+            <div className="flex flex-col gap-2">
               <h3 className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">Session Status</h3>
               <div className="flex items-center gap-2">
                 {votingStarted ? (
                   <button 
-                    onClick={async () => {
-                      await sendHostAction("RESET_ALL");
-                      setIsHost(false);
-                      setIsAdminOpen(false);
-                      safeRemoveLocalStorage("voting_app_is_host");
-                      safeRemoveLocalStorage("voting_host_login_time");
-                    }}
-                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
+                    onClick={() => sendHostAction("RESET_ALL")}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 font-semibold text-xs rounded-[4px] cursor-pointer shadow-sm flex items-center gap-1"
                   >
                     <X className="w-3 h-3" /> End Voting & Sign Out
                   </button>
@@ -966,64 +856,6 @@ export default function Home() {
               Use Session Status to activate or end voting, and Timer Management to control the countdown timer in real-time.
             </div>
 
-          </div>
-        </div>
-      )}
-
-      {/* BIOMETRIC AUTHENTICATION MODAL */}
-      {showBiometricModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-[#e2e8f0] p-6 rounded-[8px] max-w-sm w-full shadow-xl flex flex-col items-center text-center gap-4 animate-in fade-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-[#369d5c]/10 text-[#369d5c] rounded-full flex items-center justify-center">
-              <Award className="w-8 h-8 animate-pulse" />
-            </div>
-            
-            <div className="flex flex-col gap-1.5">
-              <h2 className="font-bold text-slate-800 text-lg">Xác Thực Vân Tay / FaceID</h2>
-              <p className="text-xs text-slate-500 leading-relaxed px-2">
-                Để chống bỏ phiếu gian lận, chúng tôi yêu cầu quét vân tay hoặc FaceID của thiết bị để bắt đầu bình chọn.
-              </p>
-            </div>
-
-            {biometricError && (
-              <div className="w-full p-3 bg-rose-50 border border-rose-100 rounded-[4px] text-[11px] text-rose-600 text-left font-medium leading-relaxed">
-                {biometricError}
-              </div>
-            )}
-
-            <div className="flex flex-col gap-2 w-full mt-2">
-              {isBiometricSupported ? (
-                <button
-                  onClick={async () => {
-                    const id = await triggerBiometricScan();
-                    if (id) {
-                      setBiometricFingerprint(id);
-                      // Trigger a quick friendly message
-                      setErrorMessage("Xác thực vân tay thành công! Vui lòng thực hiện lại lượt bình chọn.");
-                      setTimeout(() => setErrorMessage(null), 4000);
-                    }
-                  }}
-                  disabled={biometricLoading}
-                  className="w-full py-2.5 bg-[#369d5c] hover:bg-[#2c854e] text-white font-bold text-sm rounded-[4px] shadow-sm flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {biometricLoading ? "Đang kết nối sinh trắc học..." : "Quét Vân Tay / FaceID"}
-                </button>
-              ) : (
-                <div className="w-full text-center text-xs font-semibold text-rose-500 mt-1">
-                  Môi trường không hỗ trợ. Vui lòng mở link trực tiếp bằng Safari hoặc Chrome của điện thoại!
-                </div>
-              )}
-              
-              <button
-                onClick={() => {
-                  setShowBiometricModal(false);
-                  setBiometricError(null);
-                }}
-                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs rounded-[4px] cursor-pointer"
-              >
-                Hủy
-              </button>
-            </div>
           </div>
         </div>
       )}

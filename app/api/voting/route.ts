@@ -155,26 +155,16 @@ async function getSessionDoc(): Promise<SessionState> {
 
 const deviceDetector = new DeviceDetector();
 
-// Helper to get hardware-based voter key (Class C IP + Hardware fingerprint)
+// Helper to get voter key using Zalo ID (guarantees absolute unique voting records)
 function getVoterKey(req: NextRequest, voterId: string, fingerprint?: string): string {
-  const ip = getClientIp(req);
-  
-  // Normalize IP to Class C subnet (e.g. 171.243.48.140 -> 171_243_48)
-  let ipSegment = "127_0_0";
-  if (ip && ip !== "::1" && ip !== "127.0.0.1") {
-    const parts = ip.split(".");
-    if (parts.length >= 3) {
-      ipSegment = `${parts[0]}_${parts[1]}_${parts[2]}`;
-    } else {
-      // IPv6 fallback
-      ipSegment = ip.substring(0, 19).replace(/[^a-zA-Z0-9_-]/g, "_");
-    }
-  }
-
-  const sanitizedFp = fingerprint ? fingerprint.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
   const sanitizedVoterId = voterId ? voterId.replace(/[^a-zA-Z0-9_-]/g, "_") : "";
-
-  return `ip_${ipSegment}_fp_${sanitizedFp || sanitizedVoterId}`;
+  if (!sanitizedVoterId) {
+    // Fallback if voterId is missing
+    const ip = getClientIp(req);
+    const sanitizedIp = ip ? ip.replace(/[^a-zA-Z0-9_-]/g, "_") : "127_0_0_1";
+    return `ip_${sanitizedIp}`;
+  }
+  return `zalo_${sanitizedVoterId}`;
 }
 
 // GET handler: returns current status and if client device has voted
